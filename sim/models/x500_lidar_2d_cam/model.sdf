@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version='1.9'>
+  <model name='x500_lidar_2d_cam'>
+    <!-- 基础 x500 无人机 -->
+    <include merge='true'>
+      <uri>x500</uri>
+    </include>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         2D 激光雷达 (顶部)
+         ═══════════════════════════════════════════════════════════ -->
+    <include merge='true'>
+      <uri>model://lidar_2d_v2</uri>
+      <pose>.12 0 .26 0 0 0</pose>
+    </include>
+    <joint name="LidarJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>link</child>
+      <pose relative_to="base_link">-.1 0 .26 0 0 0</pose>
+    </joint>
+
+    <!-- ═══════════════════════════════════════════════════════════
+         4× 相机 — 安装在机臂根部下方，紧贴机体
+         640×480 @ 15fps，80° FOV
+         ═══════════════════════════════════════════════════════════ -->
+
+    <!-- 前置相机 (朝前，微微俯视 15°) -->
+    <link name="cam_front_link">
+      <pose relative_to="base_link">0.08 0 -0.02 0 0.26 0</pose>
+      <inertial>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="cam_front_vis">
+        <geometry>
+          <box><size>0.02 0.03 0.02</size></box>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.2 0.2 0.2 1</diffuse>
+        </material>
+      </visual>
+      <sensor name="cam_front" type="camera">
+        <camera>
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.1</near><far>100</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>5</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name="cam_front_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>cam_front_link</child>
+    </joint>
+
+    <!-- 后置相机 (朝后) -->
+    <link name="cam_rear_link">
+      <pose relative_to="base_link">-0.08 0 -0.02 0 0.26 3.14159</pose>
+      <inertial>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="cam_rear_vis">
+        <geometry>
+          <box><size>0.02 0.03 0.02</size></box>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.2 0.2 0.2 1</diffuse>
+        </material>
+      </visual>
+      <sensor name="cam_rear" type="camera">
+        <camera>
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.1</near><far>100</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>5</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name="cam_rear_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>cam_rear_link</child>
+    </joint>
+
+    <!-- 左侧相机 (朝左) -->
+    <link name="cam_left_link">
+      <pose relative_to="base_link">0 0.08 -0.02 0 0.26 1.5708</pose>
+      <inertial>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="cam_left_vis">
+        <geometry>
+          <box><size>0.02 0.03 0.02</size></box>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.2 0.2 0.2 1</diffuse>
+        </material>
+      </visual>
+      <sensor name="cam_left" type="camera">
+        <camera>
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.1</near><far>100</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>5</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name="cam_left_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>cam_left_link</child>
+    </joint>
+
+    <!-- 右侧相机 (朝右) -->
+    <link name="cam_right_link">
+      <pose relative_to="base_link">0 -0.08 -0.02 0 0.26 -1.5708</pose>
+      <inertial>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="cam_right_vis">
+        <geometry>
+          <box><size>0.02 0.03 0.02</size></box>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.2 0.2 0.2 1</diffuse>
+        </material>
+      </visual>
+      <sensor name="cam_right" type="camera">
+        <camera>
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.1</near><far>100</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>5</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name="cam_right_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>cam_right_link</child>
+    </joint>
+
+    <!-- 向下摄像头 (down) — 用于搜救时观察正下方地面 -->
+    <link name="cam_down_link">
+      <pose relative_to="base_link">0 0 -0.05 0 1.5708 0</pose>
+      <inertial>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>1e-6</ixx><iyy>1e-6</iyy><izz>1e-6</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="cam_down_vis">
+        <geometry>
+          <box><size>0.02 0.03 0.02</size></box>
+        </geometry>
+        <material>
+          <ambient>0.1 0.1 0.1 1</ambient>
+          <diffuse>0.2 0.2 0.2 1</diffuse>
+        </material>
+      </visual>
+      <sensor name="cam_down" type="camera">
+        <camera>
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.1</near><far>100</far></clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>5</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name="cam_down_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>cam_down_link</child>
+    </joint>
+
+  </model>
+</sdf>

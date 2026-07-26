@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+.env
+
+# Node
+node_modules/
+ui/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PX4 (user clones separately)
+PX4-Autopilot/
+Micro-XRCE-DDS-Agent/
+
+# Logs & temp
+*.log
+data/
+doctor/memory/backups/
+*.bak
+*.bak2
+*.bak3
+logs/
+
+# Runtime LLM config with API keys
+.aeroweaver_llm_config.json
+
+# Local development outputs
+.venv*/
+Users/
+
+# Generated runtime memory/profile outputs
+robot_profile/MEMORY.md
+robot_profile/SKILLS.md
+memory/vector_cache.json

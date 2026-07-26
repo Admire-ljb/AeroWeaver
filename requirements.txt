@@ -1,0 +1,39 @@
+# ============================================================
+# AeroWeaver - Python Dependencies
+# ============================================================
+
+# ── Core ─────────────────────────────────────────────────────
+numpy>=1.24.0,<2.0  # keep PX4/symforce and OpenCV runtime compatible
+pyyaml>=6.0
+python-dotenv>=1.0.0
+requests>=2.28.0
+
+# ── Web Server ───────────────────────────────────────────────
+flask>=3.0.0
+flask-socketio>=5.3.0
+flask-cors>=4.0.0
+websocket-client>=1.8.0
+
+# ── Drone Control ────────────────────────────────────────────
+mavsdk>=2.0.0
+pymavlink>=2.4.0
+
+# ── Memory & Vector Search ───────────────────────────────────
+sentence-transformers>=2.2.0
+chromadb>=0.4.0
+
+# ── LLM ──────────────────────────────────────────────────────
+openai>=1.0.0
+
+# ── Optional: Simulation Sensors ─────────────────────────────
+opencv-python-headless==4.10.0.84  # required by /api/sensor/camera; keep numpy<2 for PX4/symforce
+# Pillow>=10.0.0
+
+# ── Optional: AirSim ─────────────────────────────────────────
+# airsim>=1.8.1
+
+# ── Optional: Serial/Transport ───────────────────────────────
+# pyserial-asyncio>=0.6
+
+# ── Optional: ROS2 Bridge ────────────────────────────────────
+# rclpy (install via ROS2, not pip)

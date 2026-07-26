@@ -1,0 +1,42 @@
+# Prebuilt AeroWeaver Gazebo demo image.
+# This is intentionally separate from the lightweight mock image because Gazebo
+# adds large system dependencies.
+FROM node:22-slim AS frontend
+WORKDIR /ui
+COPY ui/package*.json ./
+RUN npm ci
+COPY ui/ ./
+RUN npm run build
+
+FROM ubuntu:24.04 AS final
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    SIM_ADAPTER=gazebo_direct \
+    AEROWEAVER_PORT=5001 \
+    PX4_GZ_WORLD=urban_rescue \
+    PX4_SIM_MODEL=x500_lidar_2d_cam \
+    GZ_MODEL=x500_lidar_2d_cam \
+    GZ_SIM_RESOURCE_PATH=/app/sim/models \
+    QT_QPA_PLATFORM=offscreen \
+    LIBGL_ALWAYS_SOFTWARE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg lsb-release python3 python3-pip python3-venv \
+      python3-opencv libglib2.0-0 libgl1 libxrender1 libxext6 \
+    && curl -fsSL https://packages.osrfoundation.org/gazebo.gpg \
+      -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
+      > /etc/apt/sources.list.d/gazebo-stable.list \
+    && apt-get update && apt-get install -y --no-install-recommends gz-harmonic \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements-mock.txt ./
+RUN python3 -m pip install --break-system-packages --no-cache-dir -r requirements-mock.txt
+COPY . .
+COPY --from=frontend /ui/dist /app/ui/dist
+COPY scripts/docker/start_gazebo_demo.sh /usr/local/bin/start-aeroweaver-gazebo
+RUN chmod +x /usr/local/bin/start-aeroweaver-gazebo
+EXPOSE 5001
+CMD ["start-aeroweaver-gazebo"]

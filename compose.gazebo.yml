@@ -1,0 +1,24 @@
+services:
+  aeroweaver-gazebo:
+    build:
+      context: .
+      dockerfile: Dockerfile.gazebo
+    image: aeroweaver:gazebo
+    environment:
+      SIM_ADAPTER: gazebo_direct
+      AEROWEAVER_PORT: 5001
+      PX4_GZ_WORLD: urban_rescue
+      PX4_SIM_MODEL: x500_lidar_2d_cam
+      GZ_MODEL: x500_lidar_2d_cam
+      GZ_SIM_RESOURCE_PATH: /app/sim/models
+      QT_QPA_PLATFORM: offscreen
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    ports:
+      - "5001:5001"
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/api/status', timeout=3).read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s

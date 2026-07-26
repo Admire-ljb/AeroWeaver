@@ -1,0 +1,27 @@
+[project]
+name = "aeroweaver"
+version = "0.1.0"
+description = "A multi-UAV coordination console for manual and LLM-driven missions"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+  { name = "AeroWeaver contributors" },
+]
+keywords = ["multi-uav", "airsim", "robotics", "drone-swarm", "llm-agents"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/Admire-ljb/AeroWeaver"
+Repository = "https://github.com/Admire-ljb/AeroWeaver.git"
+Issues = "https://github.com/Admire-ljb/AeroWeaver/issues"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
