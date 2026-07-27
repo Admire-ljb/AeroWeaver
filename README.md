@@ -143,11 +143,9 @@ vehicle names should follow `Drone_1`, `Drone_2`, and so on. The current fleet
 manager supports a reserve pool of up to ten vehicles and exposes only the
 active subset in the Web console.
 
-```bash
-cp .env.example .env
-```
-
-Configure at least:
+Start AirSim. AeroWeaver will connect to the simulator when the backend starts.
+The following settings are optional when you need to change the simulator
+address, active UAV count, or camera relay:
 
 ```dotenv
 SIM_ADAPTER=airsim
