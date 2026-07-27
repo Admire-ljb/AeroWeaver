@@ -1,7 +1,7 @@
 # AeroWeaver
 
 <p align="right">
-  <a href="./README.md">English</a> · <strong>中文</strong>
+  <a href="https://github.com/Admire-ljb/AeroWeaver/tree/main">English</a> · <strong>中文</strong>
 </p>
 
 [![研究基础：TALKER](https://img.shields.io/badge/Research%20Foundation-TALKER-0A66C2)](https://doi.org/10.1109/LRA.2024.3511434)
