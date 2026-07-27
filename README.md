@@ -1,105 +1,52 @@
 # AeroWeaver
 
 <p align="right">
-  <strong>English</strong> · <a href="https://github.com/Admire-ljb/AeroWeaver/tree/zh">中文</a>
+  <a href="https://github.com/Admire-ljb/AeroWeaver/tree/main">English</a> · <strong>中文</strong>
 </p>
 
-[![Research foundation: TALKER](https://img.shields.io/badge/Research%20Foundation-TALKER-0A66C2)](https://doi.org/10.1109/LRA.2024.3511434)
+[![研究基础：TALKER](https://img.shields.io/badge/Research%20Foundation-TALKER-0A66C2)](https://doi.org/10.1109/LRA.2024.3511434)
 
-AeroWeaver is a Web-based multi-UAV coordination system for operating,
-observing, and orchestrating autonomous aerial vehicles. It combines live
-telemetry, sensor views, direct skill execution, collision-aware formation
-control, trajectory export, and optional LLM-driven mission planning in one
-bilingual console.
+AeroWeaver 是一个面向多无人机协同控制的 Web 系统，集成无人机状态同步、传感器画面、驾驶舱控制、技能执行、编队控制、轨迹导出和可选的 LLM 任务规划。
 
-The runtime supports AirSim, PX4/Gazebo, and a dependency-light mock adapter.
-The same registered skill layer is available in both operator-controlled and
-LLM-controlled workflows.
+系统支持 AirSim、PX4/Gazebo 和 Mock 适配器，并提供中英文界面。
 
-## Highlights
+## Web 控制台
 
-- Multi-UAV fleet synchronization, selection, status, position, and battery data
-- Visible-light FPV, directional cameras, LiDAR, IMU, GPS, and distance sensors
-- Basic and advanced skill catalog with map-based position selection
-- Independent per-UAV execution with robot-level locking
-- Collision-aware rendezvous, formation hold, and rotating standby skills
-- Manual cockpit control and autonomous skill execution
-- Trajectory recording, visualization, JSON/CSV export, and replay-ready data
-- Chinese and English interface
-- Remote AirSim camera relay support
+![包含三架 Mock 无人机的 AeroWeaver Web 控制台](docs/images/web-console.jpg)
 
-## Web Console
+控制台将实时机队地图、逐机选择、传感器与驾驶舱入口、技能可视化、轨迹工具、执行日志和任务输入集中在同一界面。页面顶部的语言开关会同时切换操作控件和运行消息。
 
-![AeroWeaver Web console with three mock UAVs](docs/images/web-console.jpg)
+## 两种运行模式
 
-The console combines the live fleet map, per-UAV selection, sensor and cockpit
-entry points, skill visualization, trajectory tools, execution logs, and
-mission input. The language switch in the header changes both UI controls and
-runtime messages.
+### 手动模式
 
-## Operating Modes
+手动模式不需要配置 LLM。操作者从地图或左下角机队列表选择无人机，然后直接打开传感器、驾驶舱或技能面板。
 
-### Manual Mode
+适用于：
 
-Manual mode does not require an LLM or an API key. The operator selects a UAV
-from the map or fleet list, opens its payload or skill panel, enters parameters,
-and executes the skill directly.
+- 直接控制指定无人机；
+- 检查摄像头、LiDAR、IMU、GPS 和底部测距；
+- 通过地图取点执行飞行技能；
+- 同时向不同无人机下发独立技能；
+- 显式设置无人机列表、集合点、编队和安全间距。
 
-Use manual mode for:
+手动技能只能在手动模式下执行。后端会检查目标无人机、技能参数、机器人占用状态和适配器连接状态。
 
-- cockpit control and direct flight commands;
-- validating sensors and vehicle mappings;
-- testing one skill at a time;
-- assigning different skills to different UAVs concurrently;
-- executing multi-UAV rendezvous and formation skills with explicit parameters.
+### LLM 模式
 
-The backend only accepts direct skill execution while the system is in manual
-mode. Each command is checked against the selected robot and the registered
-skill schema before execution.
+LLM 模式接收自然语言任务，由配置的模型解析任务、选择已注册技能、生成计划并通过统一执行层下发。
 
-### LLM Mode
+适用于：
 
-LLM mode accepts a natural-language mission from the mission input panel. The
-configured model interprets the request, selects registered skills, generates a
-plan, and dispatches actions through the same execution layer used by manual
-mode.
+- 自然语言任务分解；
+- 多步骤侦察、巡检和搜索；
+- 技能选择与参数生成；
+- 多无人机任务分配；
+- 任务执行反思和状态汇报。
 
-Use LLM mode for:
+LLM 不会绕过安全控制。机器人占用锁、技能注册检查、参数校验、中断机制、地形保护和编队防碰撞仍然生效。
 
-- natural-language mission decomposition;
-- multi-step reconnaissance and inspection tasks;
-- skill selection and parameter generation;
-- plan reflection and mission progress reporting;
-- coordinated task assignment across multiple UAVs.
-
-The model does not bypass the runtime. Robot reservations, skill registration,
-parameter validation, adapter checks, interrupt handling, and flight safety
-guards still apply. An OpenAI-compatible endpoint or a local Ollama endpoint can
-be configured from `.env` or from the Web console.
-
-## Architecture
-
-```text
-Web console (React + Socket.IO)
-        |
-Flask coordination server
-        |
-Manual dispatcher or LLM planner
-        |
-Registered basic, advanced, and swarm skills
-        |
-Per-UAV execution channels and safety guards
-        |
-Mock | AirSim | PX4/Gazebo adapters
-```
-
-## Quick Start With Mock Vehicles
-
-Requirements:
-
-- Python 3.10 or newer
-- Node.js 20 or newer
-- npm 10 or newer
+## Mock 快速启动
 
 ```bash
 git clone https://github.com/Admire-ljb/AeroWeaver.git
@@ -117,76 +64,41 @@ cd ..
 SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python server.py
 ```
 
-On Windows PowerShell:
+浏览器打开 [http://127.0.0.1:5001](http://127.0.0.1:5001)。
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements-mock.txt
+## 接入 AirSim
 
-Set-Location ui
-npm ci
-npm run build
-Set-Location ..
-
-$env:SIM_ADAPTER = "mock"
-$env:AEROWEAVER_UAV_COUNT = "3"
-python server.py
-```
-
-Open [http://127.0.0.1:5001](http://127.0.0.1:5001).
-
-## AirSim
-
-Set AirSim to listen on an address reachable by the AeroWeaver backend. The
-vehicle names should follow `Drone_1`, `Drone_2`, and so on. The current fleet
-manager supports a reserve pool of up to ten vehicles and exposes only the
-active subset in the Web console.
+复制配置文件：
 
 ```bash
 cp .env.example .env
 ```
 
-Configure at least:
+填写 AirSim 地址和无人机数量：
 
 ```dotenv
 SIM_ADAPTER=airsim
 AIRSIM_HOST=127.0.0.1
 AIRSIM_PORT=41451
 AEROWEAVER_UAV_COUNT=3
-
-# Optional browser camera relay running near AirSim
 AIRSIM_CAMERA_RELAY_ENABLED=true
 AIRSIM_CAMERA_RELAY_URL=http://127.0.0.1:8765
 ```
 
-Then build the UI and start the server:
+AirSim 中的无人机名称使用 `Drone_1`、`Drone_2` 等形式。系统可以维护最多十架备用无人机，网页只显示当前激活的无人机。
 
-```bash
-cd ui && npm ci && npm run build && cd ..
-python server.py
-```
+## 配置 LLM
 
-For a remote AirSim instance, set `AIRSIM_HOST` to its reachable address. Keep
-the RPC port and camera relay behind a trusted network or tunnel; they are not
-designed as public Internet services.
-
-## Enabling LLM Mode
-
-Copy the example environment file and configure an OpenAI-compatible endpoint:
+OpenAI 兼容接口：
 
 ```dotenv
 ACTIVE_PROVIDER=openai
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_API_KEY=replace-with-your-key
 LLM_MODEL=gpt-4o
-
-VLM_BASE_URL=https://api.openai.com/v1
-VLM_API_KEY=replace-with-your-key
-VLM_MODEL=gpt-4o
 ```
 
-Local Ollama is also supported:
+本地 Ollama：
 
 ```dotenv
 ACTIVE_PROVIDER=ollama_local
@@ -194,47 +106,30 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
 OLLAMA_MODEL=qwen2.5:7b
 ```
 
-After startup:
+启动后在网页模型设置中确认模型，然后切换到 **LLM 模式**，在任务输入框中输入自然语言任务。
 
-1. Open the Web console.
-2. Confirm the adapter and fleet are online.
-3. Configure or select the model in the model settings panel.
-4. Switch from **Manual** to **LLM** mode.
-5. Enter a mission in the mission input panel.
-6. Monitor planning, robot reservations, skill execution, and results in the
-   execution log.
+## 群体技能
 
-API keys and runtime model settings are local files and are ignored by Git.
+- `swarm_rendezvous`：多机防碰撞集合；
+- `swarm_formation_hold`：三角形、圆形、直线或 V 字编队保持；
+- `swarm_orbit_hold`：保持安全间距并围绕中心旋转待命。
 
-## Swarm Skills
+群体控制器采用分层进场、独立控制通道、最小间距监测、地形安全高度统一和最终槽位校验。
 
-| Skill | Purpose |
-| --- | --- |
-| `swarm_rendezvous` | Gather selected UAVs around a map-selected center |
-| `swarm_formation_hold` | Form a triangle, circle, line, or V and hold |
-| `swarm_orbit_hold` | Rotate a formation around a center while monitoring separation |
+## 真实示例
 
-The swarm coordinator uses altitude-layered approach paths, independent AirSim
-control channels, minimum-separation monitoring, terrain-aware altitude
-leveling, and final slot verification.
+下图来自接入 AirSim 后的三机编队测试，展示了群体技能执行期间同步的无人机位置和实时 FPV 传感器窗口。
 
-## Real Examples
+![AirSim 三机编队联调](docs/images/airsim-multi-uav.webp)
 
-The following screenshot is from an AirSim-connected three-UAV formation test.
-It shows synchronized vehicle positions and a live FPV sensor window during
-swarm execution.
+### 1. 地图取点飞行
 
-![AirSim-connected multi-UAV formation test](docs/images/airsim-multi-uav.webp)
+1. 切换到**手动模式**并选择 `UAV-1`。
+2. 打开**可视化 Skill**，选择 `fly_to`，然后点击**地图取点**。
+3. 在地图选择目标，并以 `speed=15` 执行。
+4. AeroWeaver 只向 `UAV_1` 下发指令，在保持地形安全高度的同时，通过遥测更新地图位置和 FPV 画面。
 
-### 1. Map-Selected Flight
-
-1. Switch to **Manual** mode and select `UAV-1`.
-2. Open **Visualize Skill**, select `fly_to`, and click **Pick on Map**.
-3. Choose a point and execute with `speed=15`.
-4. AeroWeaver sends the command only to `UAV_1`, preserves a terrain-safe
-   altitude, and updates its map position and FPV view from telemetry.
-
-Equivalent skill input:
+对应技能参数：
 
 ```json
 {
@@ -243,9 +138,9 @@ Equivalent skill input:
 }
 ```
 
-### 2. Collision-Aware Three-UAV Orbit
+### 2. 三机防碰撞旋转编队
 
-Select the three active UAVs and execute `swarm_rendezvous` with:
+选择三架活动无人机，执行 `swarm_rendezvous`：
 
 ```json
 {
@@ -260,71 +155,30 @@ Select the three active UAVs and execute `swarm_rendezvous` with:
 }
 ```
 
-The coordinator assigns separate slots and altitude-layered approach paths,
-moves the UAVs concurrently, monitors minimum separation, and rotates the
-completed formation around the selected center.
+协调器会为各无人机分配独立槽位和分层进场路径，并发移动无人机、监测最小间距，最后围绕地图选定中心旋转编队。
 
-### 3. Natural-Language Mission
+### 3. 自然语言任务
 
-After configuring an LLM, switch to **LLM** mode and submit:
+配置 LLM 后切换到 **LLM 模式**，输入：
 
-> Send UAV-1, UAV-2, and UAV-3 to rendezvous around the selected clearing,
-> form an 8-meter triangle, then orbit for 20 seconds while maintaining safe
-> separation.
+> 让 UAV-1、UAV-2 和 UAV-3 在选定空地区域集合，组成间距 8 米的三角编队，然后在保持安全间距的情况下旋转待命 20 秒。
 
-The planner maps the request to registered swarm skills. The same parameter
-validation, per-UAV execution channels, adapter checks, and safety guards used
-by Manual mode remain active.
+规划器会把任务映射到已注册的群体技能。手动模式使用的参数校验、逐机执行通道、适配器检查和安全保护仍然全部生效。
 
-## Development
-
-Backend tests:
+## 测试
 
 ```bash
 python -m pytest
-```
 
-Focused multi-UAV regression suite:
-
-```bash
-python -m unittest \
-  tests.test_swarm_skills \
-  tests.test_multi_uav_adapter_context \
-  tests.test_basic_skills
-```
-
-Frontend:
-
-```bash
 cd ui
 npm ci
 npm run lint
 npm run build
 ```
 
-## Repository Layout
+## 研究基础
 
-```text
-adapters/       Vehicle and simulator adapters
-brain/          LLM planning and conversational mission control
-memory/         World, episodic, skill, and experience memory
-perception/     Passive perception and vision-language analysis
-runtime/        Plan and skill execution runtime
-skills/         Basic, advanced, perception, and swarm skills
-sim/            Gazebo sensor bridge and simulation assets
-swarm/          Distributed coordination helpers
-tests/          Backend, adapter, protocol, and safety tests
-ui/             React operations console
-```
-
-## Research Foundation
-
-AeroWeaver continues the research direction established by **TALKER**:
-task-activated LLM reasoning for UAV missions, reusable action primitives and
-skills, and knowledge extension through interaction. AeroWeaver develops this
-line further as an independently maintained multi-UAV operations system with
-manual and LLM modes, simulator adapters, per-UAV execution channels, swarm
-skills, and a bilingual Web console.
+AeroWeaver 延续了 **TALKER** 所建立的研究方向，包括面向无人机任务的任务激活式 LLM 推理、可复用动作原语与技能，以及基于交互的知识扩展。在此基础上，AeroWeaver 进一步发展为独立维护的多无人机操作系统，提供手动与 LLM 两种模式、仿真器适配、逐机并发执行、群体技能和中英文 Web 控制台。
 
 > J. Lou, R. Shi, Y. Lin, Q. Wang, and W. Wu, "TALKER: A Task-Activated
 > Language Model Based Knowledge-Extension Reasoning System," *IEEE Robotics
@@ -344,12 +198,10 @@ skills, and a bilingual Web console.
 }
 ```
 
-## Safety
+## 安全说明
 
-This is a research system. Validate all commands in simulation before using any
-physical aircraft. Configure geofencing, altitude limits, emergency stop
-behavior, and operator supervision independently of the LLM.
+本项目是研究系统。接入真实无人机前必须先在仿真环境验证，并独立配置地理围栏、高度限制、紧急停止和人工监督。
 
-## License
+## 许可证
 
-MIT. See [LICENSE](LICENSE).
+MIT，详见 [LICENSE](LICENSE)。
