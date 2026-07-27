@@ -1,5 +1,9 @@
 # AeroWeaver
 
+<p align="right">
+  <strong>English</strong> · <a href="./README_CN.md">中文</a>
+</p>
+
 [![Research foundation: TALKER](https://img.shields.io/badge/Research%20Foundation-TALKER-0A66C2)](https://doi.org/10.1109/LRA.2024.3511434)
 
 AeroWeaver is a Web-based multi-UAV coordination system for operating,
@@ -23,6 +27,15 @@ LLM-controlled workflows.
 - Trajectory recording, visualization, JSON/CSV export, and replay-ready data
 - Chinese and English interface
 - Remote AirSim camera relay support
+
+## Web Console
+
+![AeroWeaver Web console with three mock UAVs](docs/images/web-console.jpg)
+
+The console combines the live fleet map, per-UAV selection, sensor and cockpit
+entry points, skill visualization, trajectory tools, execution logs, and
+mission input. The language switch in the header changes both UI controls and
+runtime messages.
 
 ## Operating Modes
 
@@ -204,6 +217,64 @@ API keys and runtime model settings are local files and are ignored by Git.
 The swarm coordinator uses altitude-layered approach paths, independent AirSim
 control channels, minimum-separation monitoring, terrain-aware altitude
 leveling, and final slot verification.
+
+## Real Examples
+
+The following screenshot is from an AirSim-connected three-UAV formation test.
+It shows synchronized vehicle positions and a live FPV sensor window during
+swarm execution.
+
+![AirSim-connected multi-UAV formation test](docs/images/airsim-multi-uav.webp)
+
+### 1. Map-Selected Flight
+
+1. Switch to **Manual** mode and select `UAV-1`.
+2. Open **Visualize Skill**, select `fly_to`, and click **Pick on Map**.
+3. Choose a point and execute with `speed=15`.
+4. AeroWeaver sends the command only to `UAV_1`, preserves a terrain-safe
+   altitude, and updates its map position and FPV view from telemetry.
+
+Equivalent skill input:
+
+```json
+{
+  "target_position": [41, 62, -8],
+  "speed": 15
+}
+```
+
+### 2. Collision-Aware Three-UAV Orbit
+
+Select the three active UAVs and execute `swarm_rendezvous` with:
+
+```json
+{
+  "robot_ids": "UAV_1,UAV_2,UAV_3",
+  "center_position": [41, 62, -8],
+  "formation": "triangle",
+  "spacing": 8,
+  "speed": 15,
+  "post_action": "orbit",
+  "duration": 20,
+  "angular_speed": 8
+}
+```
+
+The coordinator assigns separate slots and altitude-layered approach paths,
+moves the UAVs concurrently, monitors minimum separation, and rotates the
+completed formation around the selected center.
+
+### 3. Natural-Language Mission
+
+After configuring an LLM, switch to **LLM** mode and submit:
+
+> Send UAV-1, UAV-2, and UAV-3 to rendezvous around the selected clearing,
+> form an 8-meter triangle, then orbit for 20 seconds while maintaining safe
+> separation.
+
+The planner maps the request to registered swarm skills. The same parameter
+validation, per-UAV execution channels, adapter checks, and safety guards used
+by Manual mode remain active.
 
 ## Development
 
