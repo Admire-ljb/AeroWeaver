@@ -1,8 +1,8 @@
 services:
   aeroweaver:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.mock
     image: aeroweaver:mock
     environment:
       SIM_ADAPTER: mock

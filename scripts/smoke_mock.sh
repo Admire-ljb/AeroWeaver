@@ -13,7 +13,7 @@ if [ -n "${PYTHON:-}" ]; then
   PYTHON_CMD=("$PYTHON")
   if ! python_ok "${PYTHON_CMD[@]}"; then
     echo "error: PYTHON must point to Python >=3.10 with pytest installed" >&2
-    echo "hint: create a venv and run: pip install -r requirements.txt pytest" >&2
+    echo "hint: create a venv and run: pip install -r requirements/mock.txt pytest" >&2
     exit 1
   fi
 else
@@ -36,16 +36,16 @@ fi
 
 if [ "${#PYTHON_CMD[@]}" -eq 0 ]; then
   echo "error: Python >=3.10 with pytest installed is required" >&2
-  echo "hint: create a venv and run: pip install -r requirements.txt pytest" >&2
+  echo "hint: create a venv and run: pip install -r requirements/mock.txt pytest" >&2
   exit 1
 fi
 
 echo "Using Python: $("${PYTHON_CMD[@]}" --version)"
 "${PYTHON_CMD[@]}" scripts/check_repository.py
-"${PYTHON_CMD[@]}" -m compileall -q adapters brain config llm memory runtime scripts sim skills swarm server.py
+"${PYTHON_CMD[@]}" -m compileall -q backend scripts
 "${PYTHON_CMD[@]}" -m pytest
 (
-  cd ui
+  cd frontend
   if [ ! -d node_modules ]; then
     if [ -f package-lock.json ]; then
       npm ci

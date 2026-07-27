@@ -22,6 +22,6 @@ Repository = "https://github.com/Admire-ljb/AeroWeaver.git"
 Issues = "https://github.com/Admire-ljb/AeroWeaver/issues"
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["backend"]
 testpaths = ["tests"]
 addopts = "-q"

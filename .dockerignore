@@ -10,8 +10,8 @@ __pycache__/
 .env
 .aeroweaver_llm_config.json
 node_modules/
-ui/node_modules/
-ui/dist/
+frontend/node_modules/
+frontend/dist/
 PX4-Autopilot/
 Micro-XRCE-DDS-Agent/
 data/

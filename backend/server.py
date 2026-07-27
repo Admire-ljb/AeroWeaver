@@ -8,7 +8,7 @@ server.py — AeroWeaver 控制台后端服务
 
 启动：
   pip install flask flask-socketio flask-cors
-  python server.py
+  python backend/server.py
 
 前端连接：
   ws://localhost:5001  (Socket.IO)
@@ -28,7 +28,9 @@ import requests
 from dataclasses import dataclass
 from typing import Optional
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_BACKEND_DIR)
+sys.path.insert(0, _BACKEND_DIR)
 
 from flask import Flask, Response, jsonify, request, send_from_directory, send_file, stream_with_context
 from flask_socketio import SocketIO, emit
@@ -39,9 +41,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 # ── 静态文件目录（React build 产物）────────────────────────────────────────────
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_UI_DIST  = os.path.join(_BASE_DIR, "ui", "dist")
-_FLEET_STATE_PATH = os.path.join(_BASE_DIR, ".aeroweaver_fleet.json")
+_BASE_DIR = _BACKEND_DIR
+_UI_DIST = os.path.join(_PROJECT_ROOT, "frontend", "dist")
+_FLEET_STATE_PATH = os.path.join(_PROJECT_ROOT, ".aeroweaver_fleet.json")
 _AIRSIM_POOL_SIZE = max(1, min(int(os.getenv("AEROWEAVER_AIRSIM_POOL_SIZE", "10")), 12))
 
 
@@ -2904,7 +2906,7 @@ def serve_body_sense_page():
     body_html = os.path.join(_BASE_DIR, "ui", "body.html")
     if os.path.exists(body_html):
         return send_file(body_html)
-    return "<h2>前端未构建，请先运行 cd ui && npm run build</h2>", 200
+    return "<h2>前端未构建，请先运行 cd frontend && npm run build</h2>", 200
 
 
 @app.route("/<path:path>")
@@ -2917,7 +2919,7 @@ def serve_frontend(path):
     index = os.path.join(_UI_DIST, "index.html")
     if os.path.exists(index):
         return send_file(index)
-    return "<h2>前端未构建，请先运行 cd ui && npm run build</h2>", 200
+    return "<h2>前端未构建，请先运行 cd frontend && npm run build</h2>", 200
 
 
 # ══════════════════════════════════════════════════════════════════════════════

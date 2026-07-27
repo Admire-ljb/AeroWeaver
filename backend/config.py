@@ -1,24 +1,26 @@
 # ============================================================
 # config.py  —— AeroWeaver Global Configuration
 #
-# All sensitive values (API keys, URLs) are loaded from .env file.
-# Copy .env.example to .env and fill in your values.
+# Sensitive values can be supplied through environment variables or an
+# optional .env file in the repository root.
 #
-# 所有敏感配置（API Key、服务地址）从 .env 文件加载。
-# 复制 .env.example 为 .env 后填入你的值即可。
+# 敏感配置可通过环境变量或仓库根目录下的可选 .env 文件提供。
 # ============================================================
 
 from __future__ import annotations
 import os
 from pathlib import Path
 
+_BACKEND_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _BACKEND_DIR.parent
+
 # ── Load .env ────────────────────────────────────────────────
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(_PROJECT_ROOT / ".env")
 except ImportError:
     # python-dotenv 未安装，手动解析 .env
-    _env_file = Path(__file__).parent / ".env"
+    _env_file = _PROJECT_ROOT / ".env"
     if _env_file.exists():
         for _line in _env_file.read_text(encoding="utf-8").splitlines():
             _line = _line.strip()
@@ -163,7 +165,7 @@ MODULE_CONFIG: dict[str, dict] = {
 }
 
 # ── 4. Skill Paths ───────────────────────────────────────────
-SKILLS_ROOT: Path = Path(__file__).parent / "skills"
+SKILLS_ROOT: Path = _BACKEND_DIR / "skills"
 
 # ── Runtime UI overrides ─────────────────────────────────────
 # ModelConfig.jsx edits are persisted in .aeroweaver_llm_config.json and

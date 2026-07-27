@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-CONFIG_PATH = Path(__file__).parent / ".aeroweaver_llm_config.json"
+CONFIG_PATH = Path(__file__).resolve().parent.parent / ".aeroweaver_llm_config.json"
 _PROVIDER_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 

@@ -236,7 +236,7 @@ ensure_python_env() {
     "$base_python" -m venv "$PROJECT_DIR/venv"
     PYTHON="$PROJECT_DIR/venv/bin/python"
     "$PYTHON" -m pip install --upgrade pip wheel setuptools
-    "$PYTHON" -m pip install -r "$PROJECT_DIR/requirements.txt"
+    "$PYTHON" -m pip install -r "$PROJECT_DIR/requirements/base.txt"
     ok "Python dependencies installed"
     return
   fi
@@ -250,12 +250,12 @@ ensure_app_python_deps() {
     ok "Backend Python dependencies are importable"
     return
   fi
-  if [ ! -f "$PROJECT_DIR/requirements.txt" ]; then
-    err "requirements.txt not found; cannot install backend Python dependencies."
+  if [ ! -f "$PROJECT_DIR/requirements/base.txt" ]; then
+    err "requirements/base.txt not found; cannot install backend Python dependencies."
     exit 1
   fi
   info "Installing backend Python dependencies"
-  "$PYTHON" -m pip install -r "$PROJECT_DIR/requirements.txt"
+  "$PYTHON" -m pip install -r "$PROJECT_DIR/requirements/base.txt"
   ok "Backend Python dependencies installed"
 }
 
@@ -303,16 +303,16 @@ PYVER
 }
 
 ensure_frontend_build() {
-  if [ -f "$PROJECT_DIR/ui/dist/index.html" ]; then
-    ok "Frontend build exists: ui/dist/index.html"
+  if [ -f "$PROJECT_DIR/frontend/dist/index.html" ]; then
+    ok "Frontend build exists: frontend/dist/index.html"
     return
   fi
   if ! command -v npm >/dev/null 2>&1; then
-    warn "npm not found; backend can still run, but build the frontend later with: cd ui && npm install && npm run build"
+    warn "npm not found; backend can still run, but build the frontend later with: cd frontend && npm install && npm run build"
     return
   fi
   info "Building Web UI"
-  (cd "$PROJECT_DIR/ui" && npm install --no-audit --no-fund && npm run build)
+  (cd "$PROJECT_DIR/frontend" && npm install --no-audit --no-fund && npm run build)
   ok "Frontend built"
 }
 
@@ -385,7 +385,7 @@ else
   info "Starting AeroWeaver backend with PX4 adapter"
   PYTHONPATH="${GZ_PYTHONPATH:+$GZ_PYTHONPATH:}${PYTHONPATH:-}" \
   SIM_ADAPTER=px4 PX4_GZ_WORLD="$WORLD" PX4_SIM_MODEL="$MODEL" AEROWEAVER_PORT="$PORT" \
-    "$PYTHON" server.py >"$SERVER_LOG" 2>&1 &
+    "$PYTHON" backend/server.py >"$SERVER_LOG" 2>&1 &
   echo $! > "$SERVER_PID_FILE"
   ok "Backend started (PID $(cat "$SERVER_PID_FILE"), log: $SERVER_LOG)"
 fi

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 PID_FILE="${AEROWEAVER_PID_FILE:-/tmp/aeroweaver-server.pid}"
-LOG_DIR="${AEROWEAVER_LOG_DIR:-${ROOT_DIR}/logs}"
+LOG_DIR="${AEROWEAVER_LOG_DIR:-${PROJECT_DIR}/logs}"
 
 if [[ -f "${PID_FILE}" ]]; then
   old_pid="$(cat "${PID_FILE}")"
@@ -17,7 +18,7 @@ if [[ -f "${PID_FILE}" ]]; then
 fi
 
 mkdir -p "${LOG_DIR}"
-nohup "${ROOT_DIR}/start_airsim_remote.sh" \
+nohup "${SCRIPT_DIR}/start_airsim_remote.sh" \
   > "${LOG_DIR}/server.log" 2>&1 < /dev/null &
 echo "$!" > "${PID_FILE}"
 

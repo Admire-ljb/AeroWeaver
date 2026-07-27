@@ -11,7 +11,7 @@ venv/
 
 # Node
 node_modules/
-ui/dist/
+frontend/dist/
 
 # IDE
 .idea/
@@ -38,12 +38,13 @@ logs/
 
 # Runtime LLM config with API keys
 .aeroweaver_llm_config.json
+.aeroweaver_fleet.json
 
 # Local development outputs
 .venv*/
 Users/
 
 # Generated runtime memory/profile outputs
-robot_profile/MEMORY.md
-robot_profile/SKILLS.md
-memory/vector_cache.json
+backend/robot_profile/MEMORY.md
+backend/robot_profile/SKILLS.md
+backend/memory/vector_cache.json

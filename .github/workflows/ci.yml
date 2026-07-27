@@ -16,7 +16,7 @@ jobs:
           cache: pip
 
       - name: Install backend dependencies
-        run: python -m pip install -r requirements-mock.txt pytest
+        run: python -m pip install -r requirements/mock.txt pytest
 
       - name: Run backend tests
         run: python -m pytest
@@ -25,16 +25,16 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: ui/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
-        working-directory: ui
+        working-directory: frontend
         run: npm ci
 
       - name: Lint frontend
-        working-directory: ui
+        working-directory: frontend
         run: npm run lint
 
       - name: Build frontend
-        working-directory: ui
+        working-directory: frontend
         run: npm run build
