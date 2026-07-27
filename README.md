@@ -68,13 +68,7 @@ SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python server.py
 
 ## 接入 AirSim
 
-复制配置文件：
-
-```bash
-cp .env.example .env
-```
-
-填写 AirSim 地址和无人机数量：
+打开 AirSim 即可，AeroWeaver 后端启动后会连接仿真器。只有需要修改仿真器地址、活动无人机数量或相机中继时，才需要调整以下可选配置：
 
 ```dotenv
 SIM_ADAPTER=airsim
