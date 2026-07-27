@@ -8,11 +8,29 @@ def test_readme_documents_all_runnable_user_paths():
         "python -m pytest",
         "npm ci",
         "npm run build",
-        "Manual Mode",
-        "LLM Mode",
         "AIRSIM_HOST=127.0.0.1",
     ]:
         assert expected in readme
+    assert (
+        ("Manual Mode" in readme and "LLM Mode" in readme)
+        or ("手动模式" in readme and "LLM 模式" in readme)
+    )
+
+
+def test_readme_language_routes_and_web_console_assets_exist():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    chinese = Path("README_CN.md").read_text(encoding="utf-8")
+
+    if "Manual Mode" in readme:
+        assert "github.com/Admire-ljb/AeroWeaver/tree/zh" in readme
+    else:
+        assert "github.com/Admire-ljb/AeroWeaver/tree/main" in readme
+
+    assert "github.com/Admire-ljb/AeroWeaver/tree/main" in chinese
+    assert Path("docs/images/web-console.jpg").is_file()
+    assert Path("docs/images/airsim-multi-uav.webp").is_file()
+    assert "docs/images/web-console.jpg" in readme
+    assert "docs/images/airsim-multi-uav.webp" in readme
 
 
 def test_compose_user_path_exists_and_uses_mock_adapter():
