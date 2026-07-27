@@ -1,5 +1,7 @@
 # AeroWeaver
 
+[![Research foundation: TALKER](https://img.shields.io/badge/Research%20Foundation-TALKER-0A66C2)](https://doi.org/10.1109/LRA.2024.3511434)
+
 AeroWeaver is a Web-based multi-UAV coordination system for operating,
 observing, and orchestrating autonomous aerial vehicles. It combines live
 telemetry, sensor views, direct skill execution, collision-aware formation
@@ -242,6 +244,33 @@ sim/            Gazebo sensor bridge and simulation assets
 swarm/          Distributed coordination helpers
 tests/          Backend, adapter, protocol, and safety tests
 ui/             React operations console
+```
+
+## Research Foundation
+
+AeroWeaver continues the research direction established by **TALKER**:
+task-activated LLM reasoning for UAV missions, reusable action primitives and
+skills, and knowledge extension through interaction. AeroWeaver develops this
+line further as an independently maintained multi-UAV operations system with
+manual and LLM modes, simulator adapters, per-UAV execution channels, swarm
+skills, and a bilingual Web console.
+
+> J. Lou, R. Shi, Y. Lin, Q. Wang, and W. Wu, "TALKER: A Task-Activated
+> Language Model Based Knowledge-Extension Reasoning System," *IEEE Robotics
+> and Automation Letters*, vol. 10, no. 2, pp. 1026-1033, 2025.
+> [doi:10.1109/LRA.2024.3511434](https://doi.org/10.1109/LRA.2024.3511434)
+
+```bibtex
+@article{lou2025talker,
+  author  = {Lou, Jiabin and Shi, Rongye and Lin, Yuxin and Wang, Qunbo and Wu, Wenjun},
+  title   = {TALKER: A Task-Activated Language Model Based Knowledge-Extension Reasoning System},
+  journal = {IEEE Robotics and Automation Letters},
+  year    = {2025},
+  volume  = {10},
+  number  = {2},
+  pages   = {1026--1033},
+  doi     = {10.1109/LRA.2024.3511434}
+}
 ```
 
 ## Safety
