@@ -13,7 +13,7 @@ mavsdk_adapter.py — MAVSDK + AirSim hybrid adapter
 
 Flight: MAVSDK -> PX4 (offboard velocity control)
 Perception: AirSim RPC (camera/LiDAR/depth)
-Launch: SIM_ADAPTER=mavsdk python server.py
+Launch: SIM_ADAPTER=mavsdk python backend/server.py
 """
 import asyncio, logging, math, time, threading
 from typing import Optional

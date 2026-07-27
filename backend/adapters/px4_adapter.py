@@ -4,7 +4,7 @@ px4_adapter.py — Pure PX4 SITL adapter via MAVSDK
 Flight control only, no AirSim perception.
 For PX4 + Gazebo simulation without AirSim.
 
-Launch: SIM_ADAPTER=px4 python server.py
+Launch: SIM_ADAPTER=px4 python backend/server.py
 """
 import asyncio, logging, math, os, time, threading
 from adapters.sim_adapter import (

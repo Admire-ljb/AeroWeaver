@@ -1,8 +1,8 @@
 services:
   aeroweaver-gazebo:
     build:
-      context: .
-      dockerfile: Dockerfile.gazebo
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.gazebo
     image: aeroweaver:gazebo
     environment:
       SIM_ADAPTER: gazebo_direct
@@ -10,7 +10,7 @@ services:
       PX4_GZ_WORLD: urban_rescue
       PX4_SIM_MODEL: x500_lidar_2d_cam
       GZ_MODEL: x500_lidar_2d_cam
-      GZ_SIM_RESOURCE_PATH: /app/sim/models
+      GZ_SIM_RESOURCE_PATH: /app/backend/sim/models
       QT_QPA_PLATFORM: offscreen
       LIBGL_ALWAYS_SOFTWARE: "1"
     ports:

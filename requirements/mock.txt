@@ -1,5 +1,5 @@
 # Lightweight dependencies for user mock mode Docker image.
-# Full PX4/Gazebo/vector-memory experiments should use requirements.txt.
+# Full PX4/Gazebo/vector-memory experiments should use requirements/base.txt.
 numpy>=1.24.0
 pyyaml>=6.0
 python-dotenv>=1.0.0

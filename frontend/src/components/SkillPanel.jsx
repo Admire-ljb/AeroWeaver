@@ -73,7 +73,7 @@ const SKILL_PARAMS = {
   get_sensor_data:  { sensor_types: ['all'] },
   run_python:       { code: 'print(sum(range(10)))' },
   http_request:     { url: 'https://example.com', method: 'GET' },
-  read_file:        { path: 'robot_profile/WORLD_MAP.md' },
+  read_file:        { path: 'backend/robot_profile/WORLD_MAP.md' },
   write_file:       { path: 'data/operator_note.txt', content: 'AeroWeaver note' },
   report:           { content: 'Routine inspection completed.', severity: 'info' },
   alert:            { message: 'Operator test alert.', level: 'warning' },

@@ -14,26 +14,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FILES = [
     "README.md",
-    "README_CN.md",
+    "docs/README_CN.md",
     "LICENSE",
-    "Dockerfile",
-    "Dockerfile.gazebo",
-    "compose.yml",
-    "compose.build.yml",
-    "compose.gazebo.yml",
+    "deploy/docker/Dockerfile.mock",
+    "deploy/docker/Dockerfile.gazebo",
+    "deploy/docker/start_gazebo_demo.sh",
+    "deploy/compose.mock.yml",
+    "deploy/compose.gazebo.yml",
     ".dockerignore",
-    "requirements-mock.txt",
+    "requirements/base.txt",
+    "requirements/mock.txt",
     ".env.example",
     "pyproject.toml",
-    "SECURITY.md",
+    ".github/SECURITY.md",
     ".github/workflows/ci.yml",
+    "backend/server.py",
+    "frontend/package.json",
     "tests/test_mock_adapter.py",
     "tests/test_server_smoke.py",
     "scripts/smoke_mock.sh",
     "scripts/smoke_mock.ps1",
     "scripts/doctor_gazebo.sh",
     "scripts/sim_quickstart.sh",
-    "scripts/docker/start_gazebo_demo.sh",
     ".gitattributes",
 ]
 
@@ -59,9 +61,12 @@ STALE_PATTERNS = [
 ]
 
 TEXT_GLOBS = [
-    "README*.md",
-    "SECURITY.md",
+    "README.md",
+    "docs/*.md",
+    ".github/*.md",
     "scripts/*.sh",
+    "deploy/**/*.yml",
+    "deploy/docker/*",
     ".github/workflows/*.yml",
 ]
 

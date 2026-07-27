@@ -2,13 +2,13 @@
 set -euo pipefail
 
 WORLD="${PX4_GZ_WORLD:-urban_rescue}"
-WORLD_FILE="/app/sim/worlds/${WORLD}.sdf"
+WORLD_FILE="/app/backend/sim/worlds/${WORLD}.sdf"
 if [[ ! -f "$WORLD_FILE" ]]; then
   echo "World file not found: $WORLD_FILE" >&2
   exit 2
 fi
 
-export GZ_SIM_RESOURCE_PATH="/app/sim/models:${GZ_SIM_RESOURCE_PATH:-}"
+export GZ_SIM_RESOURCE_PATH="/app/backend/sim/models:${GZ_SIM_RESOURCE_PATH:-}"
 export SIM_ADAPTER="${SIM_ADAPTER:-gazebo_direct}"
 export AEROWEAVER_PORT="${AEROWEAVER_PORT:-5001}"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"
@@ -25,4 +25,4 @@ trap cleanup EXIT
 
 # Give Gazebo time to advertise world services before the adapter connects.
 sleep "${GAZEBO_STARTUP_DELAY:-8}"
-python3 /app/server.py
+python3 /app/backend/server.py

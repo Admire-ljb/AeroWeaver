@@ -2,10 +2,10 @@
 # This is intentionally separate from the lightweight mock image because Gazebo
 # adds large system dependencies.
 FROM node:22-slim AS frontend
-WORKDIR /ui
-COPY ui/package*.json ./
+WORKDIR /frontend
+COPY frontend/package*.json ./
 RUN npm ci
-COPY ui/ ./
+COPY frontend/ ./
 RUN npm run build
 
 FROM ubuntu:24.04 AS final
@@ -17,7 +17,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PX4_GZ_WORLD=urban_rescue \
     PX4_SIM_MODEL=x500_lidar_2d_cam \
     GZ_MODEL=x500_lidar_2d_cam \
-    GZ_SIM_RESOURCE_PATH=/app/sim/models \
+    GZ_SIM_RESOURCE_PATH=/app/backend/sim/models \
     QT_QPA_PLATFORM=offscreen \
     LIBGL_ALWAYS_SOFTWARE=1
 
@@ -32,11 +32,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements-mock.txt ./
-RUN python3 -m pip install --break-system-packages --no-cache-dir -r requirements-mock.txt
-COPY . .
-COPY --from=frontend /ui/dist /app/ui/dist
-COPY scripts/docker/start_gazebo_demo.sh /usr/local/bin/start-aeroweaver-gazebo
+COPY requirements/mock.txt requirements/mock.txt
+RUN python3 -m pip install --break-system-packages --no-cache-dir -r requirements/mock.txt
+COPY backend/ ./backend/
+COPY --from=frontend /frontend/dist /app/frontend/dist
+COPY deploy/docker/start_gazebo_demo.sh /usr/local/bin/start-aeroweaver-gazebo
 RUN chmod +x /usr/local/bin/start-aeroweaver-gazebo
 EXPOSE 5001
 CMD ["start-aeroweaver-gazebo"]

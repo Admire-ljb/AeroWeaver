@@ -51,7 +51,7 @@ def test_sim_quickstart_handles_gazebo_python_bindings_without_polluting_venv():
 
 
 def test_aeroweaver_modified_uav_model_is_required_for_showcase():
-    model = Path("sim/models/x500_lidar_2d_cam/model.sdf").read_text(encoding="utf-8")
+    model = Path("backend/sim/models/x500_lidar_2d_cam/model.sdf").read_text(encoding="utf-8")
     for expected in ["cam_front", "cam_rear", "cam_left", "cam_right", "cam_down", "lidar_2d"]:
         assert expected in model
 

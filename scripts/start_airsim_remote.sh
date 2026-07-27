@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${ROOT_DIR}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
+cd "${PROJECT_DIR}"
 
 if [[ -f .env ]]; then
   set -a
@@ -11,7 +12,7 @@ if [[ -f .env ]]; then
   set +a
 fi
 
-PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
+PYTHON_BIN="${PYTHON_BIN:-${PROJECT_DIR}/.venv/bin/python}"
 if [[ ! -x "${PYTHON_BIN}" ]]; then
   PYTHON_BIN="${PYTHON_BIN_FALLBACK:-python3}"
 fi
@@ -23,4 +24,4 @@ export AEROWEAVER_PORT="${AEROWEAVER_PORT:-5001}"
 export AIRSIM_CAMERA_RELAY_ENABLED="${AIRSIM_CAMERA_RELAY_ENABLED:-false}"
 export AIRSIM_CAMERA_RELAY_URL="${AIRSIM_CAMERA_RELAY_URL:-http://127.0.0.1:8765}"
 
-exec "${PYTHON_BIN}" server.py
+exec "${PYTHON_BIN}" backend/server.py

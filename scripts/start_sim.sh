@@ -11,7 +11,7 @@
 #
 # This starts: DDS Agent + Gazebo + PX4 SITL.
 # Then run in another terminal:
-#   SIM_ADAPTER=px4 PX4_GZ_WORLD=<world> PX4_SIM_MODEL=<model> python server.py
+#   SIM_ADAPTER=px4 PX4_GZ_WORLD=<world> PX4_SIM_MODEL=<model> python backend/server.py
 # ============================================================
 
 set -euo pipefail
@@ -241,7 +241,7 @@ echo "           udp://:14550 (QGroundControl)"
 echo ""
 echo " In another terminal, run:"
 echo "   cd ${PROJECT_DIR}"
-echo "   SIM_ADAPTER=px4 PX4_GZ_WORLD=${WORLD} PX4_SIM_MODEL=${MODEL} python server.py"
+echo "   SIM_ADAPTER=px4 PX4_GZ_WORLD=${WORLD} PX4_SIM_MODEL=${MODEL} python backend/server.py"
 echo "   curl http://localhost:5001/api/status"
 echo "   curl http://localhost:5001/api/sensor/status"
 echo ""

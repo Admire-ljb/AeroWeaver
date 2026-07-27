@@ -54,14 +54,14 @@ cd AeroWeaver
 
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-mock.txt
+pip install -r requirements/mock.txt
 
-cd ui
+cd frontend
 npm ci
 npm run build
 cd ..
 
-SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python server.py
+SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python backend/server.py
 ```
 
 浏览器打开 [http://127.0.0.1:5001](http://127.0.0.1:5001)。
@@ -164,10 +164,22 @@ OLLAMA_MODEL=qwen2.5:7b
 ```bash
 python -m pytest
 
-cd ui
+cd frontend
 npm ci
 npm run lint
 npm run build
+```
+
+## 仓库结构
+
+```text
+backend/        Python 服务、适配器、智能体、技能与仿真资源
+frontend/       React Web 操作界面
+deploy/         Dockerfile 与 Compose 部署定义
+docs/           文档、界面截图与中文版 README 源文件
+requirements/   按用途拆分的 Python 依赖
+scripts/        启动、诊断与仓库维护脚本
+tests/          后端、适配器、协议与安全测试
 ```
 
 ## 研究基础

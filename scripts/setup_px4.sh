@@ -360,7 +360,7 @@ fi
 info "Installing and verifying the AeroWeaver modified UAV model..."
 
 AEROWEAVER_MODEL="x500_lidar_2d_cam"
-CUSTOM_MODEL_SRC="${PROJECT_DIR}/sim/models/${AEROWEAVER_MODEL}"
+CUSTOM_MODEL_SRC="${PROJECT_DIR}/backend/sim/models/${AEROWEAVER_MODEL}"
 CUSTOM_MODEL_DST="${MODEL_DIR}/${AEROWEAVER_MODEL}"
 if [ ! -d "$CUSTOM_MODEL_SRC" ]; then
     err "Required AeroWeaver modified UAV model is missing: $CUSTOM_MODEL_SRC"
@@ -392,7 +392,7 @@ echo "  Sensors: front/rear/left/right/down cameras + 2D LiDAR"
 info "Installing AeroWeaver custom Gazebo worlds..."
 
 PX4_WORLDS="${PX4_DIR}/Tools/simulation/gz/worlds"
-CUSTOM_WORLDS_SRC="${PROJECT_DIR}/sim/worlds"
+CUSTOM_WORLDS_SRC="${PROJECT_DIR}/backend/sim/worlds"
 
 if [ -d "$CUSTOM_WORLDS_SRC" ] && [ -d "$PX4_WORLDS" ]; then
     cp "${CUSTOM_WORLDS_SRC}/"*.sdf "$PX4_WORLDS/" 2>/dev/null || true
@@ -504,12 +504,12 @@ echo ""
 echo "Next steps:"
 echo "  1. Check setup:       ./scripts/doctor_gazebo.sh urban_rescue x500_lidar_2d_cam"
 echo "  2. Start simulation:  ./scripts/start_sim.sh urban_rescue x500_lidar_2d_cam"
-echo "  3. Start AeroWeaver:  SIM_ADAPTER=px4 PX4_GZ_WORLD=urban_rescue PX4_SIM_MODEL=x500_lidar_2d_cam python server.py"
+echo "  3. Start AeroWeaver:  SIM_ADAPTER=px4 PX4_GZ_WORLD=urban_rescue PX4_SIM_MODEL=x500_lidar_2d_cam python backend/server.py"
 echo "  4. Open browser:      http://localhost:5001"
 echo ""
 echo "Control-debug fallback only (not the research showcase):"
 echo "  ./scripts/start_sim.sh default x500"
-echo "  SIM_ADAPTER=px4 PX4_GZ_WORLD=default PX4_SIM_MODEL=x500 python server.py"
+echo "  SIM_ADAPTER=px4 PX4_GZ_WORLD=default PX4_SIM_MODEL=x500 python backend/server.py"
 echo "  Return to x500_lidar_2d_cam before demos or paper artifact checks."
 echo ""
 if [ -x "${SCRIPT_DIR}/doctor_gazebo.sh" ]; then

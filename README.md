@@ -107,14 +107,14 @@ cd AeroWeaver
 
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements-mock.txt
+pip install -r requirements/mock.txt
 
-cd ui
+cd frontend
 npm ci
 npm run build
 cd ..
 
-SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python server.py
+SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python backend/server.py
 ```
 
 On Windows PowerShell:
@@ -122,16 +122,16 @@ On Windows PowerShell:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements-mock.txt
+pip install -r requirements/mock.txt
 
-Set-Location ui
+Set-Location frontend
 npm ci
 npm run build
 Set-Location ..
 
 $env:SIM_ADAPTER = "mock"
 $env:AEROWEAVER_UAV_COUNT = "3"
-python server.py
+python backend/server.py
 ```
 
 Open [http://127.0.0.1:5001](http://127.0.0.1:5001).
@@ -161,8 +161,8 @@ AIRSIM_CAMERA_RELAY_URL=http://127.0.0.1:8765
 Then build the UI and start the server:
 
 ```bash
-cd ui && npm ci && npm run build && cd ..
-python server.py
+cd frontend && npm ci && npm run build && cd ..
+python backend/server.py
 ```
 
 For a remote AirSim instance, set `AIRSIM_HOST` to its reachable address. Keep
@@ -171,7 +171,8 @@ designed as public Internet services.
 
 ## Enabling LLM Mode
 
-Copy the example environment file and configure an OpenAI-compatible endpoint:
+Provide an OpenAI-compatible endpoint through environment variables or the
+model settings panel:
 
 ```dotenv
 ACTIVE_PROVIDER=openai
@@ -294,7 +295,7 @@ python -m unittest \
 Frontend:
 
 ```bash
-cd ui
+cd frontend
 npm ci
 npm run lint
 npm run build
@@ -303,16 +304,13 @@ npm run build
 ## Repository Layout
 
 ```text
-adapters/       Vehicle and simulator adapters
-brain/          LLM planning and conversational mission control
-memory/         World, episodic, skill, and experience memory
-perception/     Passive perception and vision-language analysis
-runtime/        Plan and skill execution runtime
-skills/         Basic, advanced, perception, and swarm skills
-sim/            Gazebo sensor bridge and simulation assets
-swarm/          Distributed coordination helpers
+backend/        Python service, adapters, agents, skills, and simulation assets
+frontend/       React operations console
+deploy/         Dockerfiles and Compose definitions
+docs/           Documentation, screenshots, and the Chinese README source
+requirements/   Python dependency groups
+scripts/        Startup, diagnostics, and repository maintenance
 tests/          Backend, adapter, protocol, and safety tests
-ui/             React operations console
 ```
 
 ## Research Foundation

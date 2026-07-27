@@ -37,8 +37,8 @@ PX4_WORLD_DIR="${PX4_DIR}/Tools/simulation/gz/worlds"
 PX4_MODEL_DIR="${PX4_DIR}/Tools/simulation/gz/models"
 LOCAL_MODEL_DIR="${HOME}/.simulation-gazebo/models"
 LOCAL_WORLD_DIR="${HOME}/.simulation-gazebo/worlds"
-CUSTOM_MODEL_DIR="${PROJECT_DIR}/sim/models/${MODEL}"
-CUSTOM_WORLD_FILE="${PROJECT_DIR}/sim/worlds/${WORLD}.sdf"
+CUSTOM_MODEL_DIR="${PROJECT_DIR}/backend/sim/models/${MODEL}"
+CUSTOM_WORLD_FILE="${PROJECT_DIR}/backend/sim/worlds/${WORLD}.sdf"
 WORLD_FILE="${PX4_WORLD_DIR}/${WORLD}.sdf"
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -135,11 +135,11 @@ fi
 printf "\n"
 info "3/7 Checking AeroWeaver world/model assets"
 if [ -f "$CUSTOM_WORLD_FILE" ]; then
-  pass "Repository world source exists: sim/worlds/${WORLD}.sdf"
+  pass "Repository world source exists: backend/sim/worlds/${WORLD}.sdf"
 elif [ "$WORLD" = "default" ]; then
   warn "No repository source for PX4 default world; this is expected when using PX4's built-in default world."
 else
-  fail "Repository world source missing: sim/worlds/${WORLD}.sdf"
+  fail "Repository world source missing: backend/sim/worlds/${WORLD}.sdf"
 fi
 
 if [ -f "$WORLD_FILE" ]; then
@@ -155,11 +155,11 @@ if [ "$MODEL" != "$SHOWCASE_MODEL" ]; then
 fi
 
 if [ -d "$CUSTOM_MODEL_DIR" ]; then
-  pass "Repository model source exists: sim/models/${MODEL}"
+  pass "Repository model source exists: backend/sim/models/${MODEL}"
 elif [ "$MODEL" = "x500" ]; then
   warn "Using PX4 standard x500 model only for control debugging; this is not the full AeroWeaver showcase."
 else
-  fail "Repository model source missing: sim/models/${MODEL}"
+  fail "Repository model source missing: backend/sim/models/${MODEL}"
 fi
 
 if [ "$MODEL" = "$SHOWCASE_MODEL" ] && [ -f "$CUSTOM_MODEL_DIR/model.sdf" ]; then
@@ -195,15 +195,15 @@ check_python_import mavsdk "Install with: python3 -m pip install mavsdk"
 
 printf "\n"
 info "5/7 Checking AeroWeaver server path"
-if [ -f "$PROJECT_DIR/server.py" ]; then
-  pass "server.py exists"
+if [ -f "$PROJECT_DIR/backend/server.py" ]; then
+  pass "backend/server.py exists"
 else
-  fail "server.py missing; run this script from the AeroWeaver repository."
+  fail "backend/server.py missing; run this script from the AeroWeaver repository."
 fi
-if [ -f "$PROJECT_DIR/sim/gz_sensor_bridge.py" ]; then
+if [ -f "$PROJECT_DIR/backend/sim/gz_sensor_bridge.py" ]; then
   pass "Gazebo sensor bridge exists"
 else
-  fail "sim/gz_sensor_bridge.py missing"
+  fail "backend/sim/gz_sensor_bridge.py missing"
 fi
 
 printf "\n"
@@ -211,7 +211,7 @@ info "6/7 Suggested commands"
 printf "  Setup once:      ./scripts/setup_px4.sh\n"
 printf "  Research demo:   ./scripts/sim_quickstart.sh\n"
 printf "  Start sim:       ./scripts/start_sim.sh %s %s\n" "$WORLD" "$MODEL"
-printf "  Start backend:   SIM_ADAPTER=px4 PX4_GZ_WORLD=%s PX4_SIM_MODEL=%s python server.py\n" "$WORLD" "$MODEL"
+printf "  Start backend:   SIM_ADAPTER=px4 PX4_GZ_WORLD=%s PX4_SIM_MODEL=%s python backend/server.py\n" "$WORLD" "$MODEL"
 printf "  Status checks:   curl http://localhost:5001/api/status && curl http://localhost:5001/api/sensor/status\n"
 printf "  Logs:            /tmp/aeroweaver_dds.log /tmp/aeroweaver_gz.log /tmp/aeroweaver_px4.log\n"
 

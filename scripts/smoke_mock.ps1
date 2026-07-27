@@ -5,7 +5,7 @@ python scripts/check_repository.py
 python -m compileall -q .
 python -m pytest
 
-Push-Location ui
+Push-Location frontend
 try {
   npm install
   npm run lint
@@ -16,4 +16,4 @@ finally {
 }
 
 Write-Host "mock demo smoke checks passed"
-Write-Host "Start the backend with: `$env:SIM_ADAPTER='mock'; python server.py"
+Write-Host "Start the backend with: `$env:SIM_ADAPTER='mock'; python backend/server.py"
