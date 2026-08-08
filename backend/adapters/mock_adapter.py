@@ -6,6 +6,7 @@ Mock 仿真适配器 —— 纯内存模拟，不依赖任何外部仿真环境�
 
 import time
 import logging
+import threading
 from adapters.sim_adapter import SimAdapter, Position, GPSPosition, VehicleState, ActionResult
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ class MockAdapter(SimAdapter):
     supported_vehicles = ["multirotor", "fixedwing", "rover"]
 
     def __init__(self):
+        self._state_lock = threading.RLock()
         self._connected = False
         self._armed = False
         self._in_air = False
@@ -36,36 +38,102 @@ class MockAdapter(SimAdapter):
             "position": Position(0, 0, 0),
             "velocity_body": [0.0, 0.0, 0.0, 0.0],
             "battery": (12.6, 1.0),
+            "moving": False,
         }
 
     def _capture_active_state(self):
-        self._robot_states[self._active_robot] = {
-            "armed": self._armed,
-            "in_air": self._in_air,
-            "position": Position(self._position.north, self._position.east, self._position.down),
-            "velocity_body": list(self._velocity_body),
-            "battery": tuple(self._battery),
-        }
+        with self._state_lock:
+            previous = self._robot_states.get(self._active_robot, {})
+            self._robot_states[self._active_robot] = {
+                "armed": self._armed,
+                "in_air": self._in_air,
+                "position": Position(self._position.north, self._position.east, self._position.down),
+                "velocity_body": list(self._velocity_body),
+                "battery": tuple(self._battery),
+                "moving": bool(previous.get("moving", False)),
+            }
 
     def _restore_active_state(self):
-        snapshot = self._robot_states.setdefault(self._active_robot, self._default_robot_state())
-        pos = snapshot["position"]
-        self._armed = bool(snapshot["armed"])
-        self._in_air = bool(snapshot["in_air"])
-        self._position = Position(pos.north, pos.east, pos.down)
-        self._velocity_body = list(snapshot["velocity_body"])
-        self._battery = tuple(snapshot["battery"])
+        with self._state_lock:
+            snapshot = self._robot_states.setdefault(self._active_robot, self._default_robot_state())
+            pos = snapshot["position"]
+            self._armed = bool(snapshot["armed"])
+            self._in_air = bool(snapshot["in_air"])
+            self._position = Position(pos.north, pos.east, pos.down)
+            self._velocity_body = list(snapshot["velocity_body"])
+            self._battery = tuple(snapshot["battery"])
 
     def set_active_robot(self, robot_id: str):
-        robot_id = str(robot_id or "UAV_1")
-        if robot_id == self._active_robot:
-            return
-        self._capture_active_state()
-        self._active_robot = robot_id
-        self._restore_active_state()
+        with self._state_lock:
+            robot_id = str(robot_id or "UAV_1")
+            if robot_id == self._active_robot:
+                return
+            self._capture_active_state()
+            self._active_robot = robot_id
+            self._restore_active_state()
 
     def get_active_robot(self) -> str:
-        return self._active_robot
+        with self._state_lock:
+            return self._active_robot
+
+    def seed_fleet(self, robots: dict):
+        """Initialize the complete mock fleet from WorldModel robot data."""
+        with self._state_lock:
+            for robot_id, robot in (robots or {}).items():
+                position = list(robot.get("position") or [0.0, 0.0, 0.0])
+                position = (position + [0.0, 0.0, 0.0])[:3]
+                battery = float(robot.get("battery", 100.0))
+                if battery > 1.0:
+                    battery /= 100.0
+                self._robot_states[str(robot_id)] = {
+                    "armed": bool(robot.get("armed", False)),
+                    "in_air": bool(robot.get("in_air", False)),
+                    "position": Position(*[float(value) for value in position]),
+                    "velocity_body": [0.0, 0.0, 0.0, 0.0],
+                    "battery": (12.6, max(0.0, min(1.0, battery))),
+                    "moving": False,
+                }
+            self._restore_active_state()
+
+    def get_robot_snapshot(self) -> dict:
+        """Return a thread-safe snapshot for fleet telemetry synchronization."""
+        with self._state_lock:
+            return {
+                robot_id: {
+                    "position": state["position"].to_list(),
+                    "velocity": list(state["velocity_body"][:3]),
+                    "battery": float(state["battery"][1]),
+                    "armed": bool(state["armed"]),
+                    "in_air": bool(state["in_air"]),
+                    "moving": bool(state.get("moving", False)),
+                }
+                for robot_id, state in self._robot_states.items()
+            }
+
+    def set_robot_position(
+        self,
+        robot_id: str,
+        north: float,
+        east: float,
+        down: float,
+        *,
+        velocity=None,
+        moving: bool = False,
+        in_air: bool = True,
+    ):
+        """Set one simulated UAV pose without changing the selected UAV."""
+        with self._state_lock:
+            robot_id = str(robot_id)
+            state = self._robot_states.setdefault(robot_id, self._default_robot_state())
+            state["position"] = Position(float(north), float(east), float(down))
+            if velocity is not None:
+                values = [float(value) for value in list(velocity)[:3]]
+                state["velocity_body"] = values + [0.0] * (4 - len(values))
+            state["moving"] = bool(moving)
+            state["in_air"] = bool(in_air)
+            state["armed"] = bool(in_air) or bool(state["armed"])
+            if robot_id == self._active_robot:
+                self._restore_active_state()
 
     def connect(self, connection_str="mock://", timeout=1.0) -> bool:
         self._connected = True
@@ -79,13 +147,14 @@ class MockAdapter(SimAdapter):
         return self._connected
 
     def get_state(self) -> VehicleState:
-        return VehicleState(
-            armed=self._armed, in_air=self._in_air, mode="MOCK",
-            position_ned=self._position,
-            position_gps=GPSPosition(47.397971, 8.546163, self._position.altitude),
-            battery_voltage=self._battery[0], battery_percent=self._battery[1],
-            velocity=self._velocity_body[:3],
-        )
+        with self._state_lock:
+            return VehicleState(
+                armed=self._armed, in_air=self._in_air, mode="MOCK",
+                position_ned=self._position,
+                position_gps=GPSPosition(47.397971, 8.546163, self._position.altitude),
+                battery_voltage=self._battery[0], battery_percent=self._battery[1],
+                velocity=self._velocity_body[:3],
+            )
 
     def get_position(self) -> Position:
         return self._position

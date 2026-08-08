@@ -45,3 +45,21 @@ def test_mock_adapter_supports_cockpit_velocity_controls():
     stop = adapter.stop_velocity()
     assert stop.success
     assert adapter.get_state().velocity == [0.0, 0.0, 0.0]
+
+
+def test_mock_adapter_tracks_a_complete_fleet_independently():
+    adapter = MockAdapter()
+    adapter.connect()
+    adapter.seed_fleet({
+        "UAV_1": {"position": [0, 0, 0], "battery": 95},
+        "UAV_2": {"position": [18, 0, 0], "battery": 90},
+        "UAV_3": {"position": [18, 18, 0], "battery": 85},
+    })
+
+    adapter.set_robot_position("UAV_2", 25, 10, -12, moving=True, in_air=True)
+    snapshot = adapter.get_robot_snapshot()
+
+    assert snapshot["UAV_1"]["position"] == [0.0, 0.0, 0.0]
+    assert snapshot["UAV_2"]["position"] == [25.0, 10.0, -12.0]
+    assert snapshot["UAV_2"]["moving"] is True
+    assert snapshot["UAV_3"]["battery"] == 0.85

@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 PROFILE_DIR = Path(__file__).parent.parent / "robot_profile"
 
 AGENT_SYSTEM_PROMPT = """\
+Swarm area-search rule:
+- When the operator explicitly asks multiple UAVs to search, cover, sweep, or reconnoiter an area, call swarm_area_search once.
+- Use every active UAV unless the operator gives a count or an explicit UAV list.
+- Put all participating IDs in robot_ids and choose a bounded rectangular area_center, area_width, and area_height.
+- Do not decompose a swarm search into repeated single-UAV fly_to calls.
+- After swarm_area_search succeeds, summarize the coverage and finish the task.
+
 你就是一架智能无人机 (OR-1 / UAV_1)。你正在自主执行一个任务。
 
 你的工作方式:
@@ -580,7 +587,7 @@ class AgentLoop:
                 continue
 
             # 反重复硬拦截: 非移动技能连续3次直接拒绝
-            MOVE_SKILLS = {"fly_to", "fly_relative", "takeoff", "land", "return_to_launch"}
+            MOVE_SKILLS = {"fly_to", "fly_relative", "takeoff", "land", "return_to_launch", "swarm_area_search", "swarm_rendezvous", "swarm_formation_hold", "swarm_orbit_hold"}
             if skill_name not in MOVE_SKILLS and len(self.action_history) >= 2:
                 recent = [h["skill"] for h in self.action_history[-2:]]
                 if all(s == skill_name for s in recent):

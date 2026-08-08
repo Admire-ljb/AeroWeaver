@@ -2,10 +2,13 @@ import math
 import unittest
 
 from adapters import adapter_manager
+from adapters.mock_adapter import MockAdapter
 from adapters.sim_adapter import ActionResult, Position
 from skills.swarm_skills import (
+    SwarmAreaSearch,
     SwarmOrbitHold,
     SwarmRendezvous,
+    build_area_search_paths,
     formation_offsets,
     minimum_separation,
 )
@@ -83,6 +86,21 @@ class SwarmPlannerTests(unittest.TestCase):
         positions = [(north, east, -30.0) for north, east in offsets]
         self.assertGreaterEqual(minimum_separation(positions), 6.99)
 
+    def test_area_search_paths_partition_the_rectangle(self):
+        paths = build_area_search_paths(
+            ["UAV_1", "UAV_2", "UAV_3"],
+            [30.0, 10.0, -12.0],
+            90.0,
+            60.0,
+            tracks_per_uav=4,
+        )
+
+        self.assertEqual(set(paths), {"UAV_1", "UAV_2", "UAV_3"})
+        self.assertTrue(all(len(path) == 8 for path in paths.values()))
+        self.assertTrue(all(min(point[0] for point in path) == 0.0 for path in paths.values()))
+        self.assertTrue(all(max(point[0] for point in path) == 60.0 for path in paths.values()))
+        self.assertLess(max(point[1] for point in paths["UAV_1"]), min(point[1] for point in paths["UAV_2"]))
+
 
 class SwarmExecutionTests(unittest.TestCase):
     def setUp(self):
@@ -148,6 +166,48 @@ class SwarmExecutionTests(unittest.TestCase):
         )
         self.assertLessEqual(result.output["max_slot_error_m"], 0.01)
         self.assertLessEqual(result.output["altitude_spread_m"], 0.01)
+
+
+class MockAreaSearchExecutionTests(unittest.TestCase):
+    def setUp(self):
+        adapter_manager._close_robot_adapters()
+        self.previous_adapter = adapter_manager._adapter
+        self.previous_connection = adapter_manager._adapter_connection_str
+        mock = MockAdapter()
+        mock.connect()
+        mock.seed_fleet({
+            "UAV_1": {"position": [0, 0, 0], "battery": 96},
+            "UAV_2": {"position": [18, 0, 0], "battery": 93},
+            "UAV_3": {"position": [18, 18, 0], "battery": 90},
+            "UAV_4": {"position": [0, 18, 0], "battery": 87},
+        })
+        adapter_manager._adapter = mock
+        adapter_manager._adapter_connection_str = "mock://"
+
+    def tearDown(self):
+        adapter_manager._close_robot_adapters()
+        adapter_manager._adapter = self.previous_adapter
+        adapter_manager._adapter_connection_str = self.previous_connection
+
+    def test_four_uavs_visually_cover_one_area(self):
+        result = SwarmAreaSearch().execute({
+            "robot_ids": "UAV_1,UAV_2,UAV_3,UAV_4",
+            "area_center": [30, 30, -12],
+            "area_width": 80,
+            "area_height": 60,
+            "speed": 20,
+            "tracks_per_uav": 4,
+            "visual_duration": 0.1,
+        })
+
+        self.assertTrue(result.success, result.error_msg)
+        self.assertEqual(result.output["coverage_percent"], 100.0)
+        self.assertEqual(result.output["searched_area_m2"], 4800.0)
+        self.assertEqual(len(result.output["search_paths"]), 4)
+        snapshot = adapter_manager._adapter.get_robot_snapshot()
+        self.assertTrue(all(item["in_air"] for item in snapshot.values()))
+        self.assertTrue(all(not item["moving"] for item in snapshot.values()))
+        self.assertEqual(len({tuple(item["position"]) for item in snapshot.values()}), 4)
 
 
 if __name__ == "__main__":
