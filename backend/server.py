@@ -494,6 +494,8 @@ def _build_robot_registry(robot_id: str, robot_type: str):
         SwarmPerimeterPatrol, SwarmWaypointInspection,
         SwarmRelayDeploy, SwarmEscortRoute,
     )
+    from skills.fleet_skills import SetFleetSize, configure_fleet_resize_handler
+    configure_fleet_resize_handler(_resize_fleet_from_skill)
     from skills.perception_skills import (
         DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe, Perceive,
     )
@@ -509,7 +511,7 @@ def _build_robot_registry(robot_id: str, robot_type: str):
         LookAround, MarkLocation, GetMarks, OrbitInspect,
         SwarmAreaSearch, SwarmRendezvous, SwarmFormationHold, SwarmOrbitHold,
         SwarmPerimeterPatrol, SwarmWaypointInspection,
-        SwarmRelayDeploy, SwarmEscortRoute,
+        SwarmRelayDeploy, SwarmEscortRoute, SetFleetSize,
         # 软技能不再注册 Python 类，改为文档驱动 (skills/soft_docs/*.md)
         DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe, Perceive,
         # 认知技能（信息层）
@@ -547,11 +549,10 @@ def _initial_robot_specs() -> list[tuple[str, str, list, float]]:
     formation. Real adapters stay single-UAV unless explicitly configured.
     """
     sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
-    if sim_adapter in ("airsim", "airsim_physics"):
+    if sim_adapter in ("airsim", "airsim_physics", "mock"):
         count = state._desired_airsim_fleet_count
     else:
-        default_count = 4 if sim_adapter == "mock" else 1
-        count = _configured_uav_count(default_count)
+        count = _configured_uav_count(1)
     formation = [
         [0, 0, 0],
         [18, 0, 0],
@@ -1017,6 +1018,105 @@ def _sync_airsim_fleet_to_world(
         socketio.emit("skill_catalog", _get_skill_catalog())
         socketio.emit("system_status", _get_system_status())
     return True
+
+
+def _synchronize_mock_fleet(count: int, positions=None) -> dict:
+    """Resize the in-memory fleet and keep world, runtime, and adapter in sync."""
+    count = max(1, min(int(count), min(_AIRSIM_POOL_SIZE, 10)))
+    positions = list(positions or [])
+    requested_positions = {}
+    for index, entry in enumerate(positions):
+        if isinstance(entry, dict):
+            robot_id = str(entry.get("robot_id") or f"UAV_{index + 1}").replace("-", "_")
+            position = entry.get("position")
+        else:
+            robot_id = f"UAV_{index + 1}"
+            position = entry
+        if isinstance(position, (list, tuple)) and len(position) >= 3:
+            try:
+                requested_positions[robot_id] = [float(value) for value in position[:3]]
+            except (TypeError, ValueError):
+                pass
+
+    existing = state.world_model.get_world_state().get("robots", {})
+    previous_uav_ids = {
+        robot_id
+        for robot_id, robot in existing.items()
+        if str(robot.get("robot_type", "")).upper() == "UAV"
+    }
+    active_ids = [f"UAV_{index + 1}" for index in range(count)]
+    formation = [
+        [0, 0, 0], [18, 0, 0], [18, 18, 0], [0, 18, 0],
+        [36, 0, 0], [36, 18, 0], [0, 36, 0], [18, 36, 0],
+        [36, 36, 0], [54, 0, 0],
+    ]
+
+    robots = {}
+    for index, robot_id in enumerate(active_ids):
+        current = dict(existing.get(robot_id) or {})
+        position = requested_positions.get(robot_id)
+        if position is None:
+            position = list(current.get("position") or formation[index])
+        current.update({
+            "robot_type": "UAV",
+            "position": position,
+            "battery": float(current.get("battery", max(55.0, 92.0 - index * 3.0))),
+            "status": current.get("status", "idle"),
+            "in_air": bool(current.get("in_air", False)),
+            "sensor_status": current.get("sensor_status") or {
+                "camera": True,
+                "lidar": True,
+                "microphone": True,
+            },
+        })
+        robots[robot_id] = current
+
+    non_uav = {
+        robot_id: robot
+        for robot_id, robot in existing.items()
+        if str(robot.get("robot_type", "")).upper() != "UAV"
+    }
+    state.world_model._state["robots"] = {**non_uav, **robots}
+    state.world_model._state["timestamp"] = time.time()
+
+    active_set = set(active_ids)
+    for robot_id in active_ids:
+        if robot_id not in state.robot_registries:
+            registry, _ = _build_robot_registry(robot_id, "UAV")
+            state.robot_registries[robot_id] = registry
+    for robot_id in list(state.robot_registries):
+        if str(robot_id).upper().startswith("UAV_") and robot_id not in active_set:
+            state.robot_registries.pop(robot_id, None)
+    if state.runtime:
+        state.runtime._robot_registries = state.robot_registries
+        state.runtime._executor._robot_registries = state.robot_registries
+
+    from adapters.adapter_manager import get_adapter
+    adapter = get_adapter()
+    seed_fleet = getattr(adapter, "seed_fleet", None) if adapter else None
+    if callable(seed_fleet):
+        seed_fleet(robots)
+    retain_fleet = getattr(adapter, "retain_fleet", None) if adapter else None
+    if callable(retain_fleet):
+        retain_fleet(active_ids)
+
+    if state.current_robot not in active_set:
+        state.current_robot = active_ids[0]
+
+    return {
+        "ok": True,
+        "adapter": "mock",
+        "active_count": count,
+        "pool_size": min(_AIRSIM_POOL_SIZE, 10),
+        "ready_pool_size": min(_AIRSIM_POOL_SIZE, 10),
+        "activated": sorted(active_set - previous_uav_ids, key=_vehicle_sort_key),
+        "deactivated": sorted(previous_uav_ids - active_set, key=_vehicle_sort_key),
+        "fleet": [
+            {"robot_id": robot_id, "position": robots[robot_id]["position"]}
+            for robot_id in active_ids
+        ],
+        "restarted": False,
+    }
 
 
 def _start_telemetry_sync():
@@ -1902,8 +2002,17 @@ def api_status():
 
 @app.route("/api/fleet", methods=["GET", "POST"])
 def api_fleet():
-    """Read or synchronize the active UAV fleet with AirSim settings."""
-    if request.method == "GET":
+    """Read or synchronize the active UAV fleet."""
+    return _handle_fleet_request()
+
+
+def _handle_fleet_request(
+    payload_override=None,
+    *,
+    allow_during_ai=False,
+    allowed_busy_robots=None,
+):
+    if payload_override is None and request.method == "GET":
         robots = (state.get_world_snapshot().get("robots") or {})
         fleet = [
             {
@@ -1923,17 +2032,46 @@ def api_fleet():
             "syncing": _fleet_sync_lock.locked(),
         })
 
-    if os.getenv("SIM_ADAPTER", "px4").lower() not in ("airsim", "airsim_physics"):
-        return jsonify({"ok": False, "error": "Fleet synchronization requires the AirSim adapter"}), 409
-    if state.is_executing:
+    sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
+    if sim_adapter not in ("airsim", "airsim_physics", "mock"):
+        return jsonify({"ok": False, "error": "Fleet synchronization requires Mock or AirSim"}), 409
+    if state.is_executing and not allow_during_ai:
         return jsonify({"ok": False, "error": "Cannot resize the fleet while a skill or mission is executing"}), 409
+
+    allowed_busy = {str(robot_id) for robot_id in (allowed_busy_robots or [])}
+    busy_robots = set(state.executing_robot_snapshot()) - allowed_busy
+    if busy_robots:
+        return jsonify({
+            "ok": False,
+            "error": f"Cannot resize while UAVs are executing: {', '.join(sorted(busy_robots))}",
+        }), 409
     if not _fleet_sync_lock.acquire(blocking=False):
-        return jsonify({"ok": False, "error": "AirSim fleet synchronization is already running"}), 409
+        return jsonify({"ok": False, "error": "Fleet synchronization is already running"}), 409
 
     try:
-        payload = request.get_json(silent=True) or {}
-        count = max(1, min(int(payload.get("count", 1)), _AIRSIM_POOL_SIZE))
+        payload = (
+            dict(payload_override)
+            if payload_override is not None
+            else (request.get_json(silent=True) or {})
+        )
+        count = max(1, min(int(payload.get("count", 1)), min(_AIRSIM_POOL_SIZE, 10)))
         positions = payload.get("fleet") or payload.get("positions") or []
+
+        if sim_adapter == "mock":
+            result = _synchronize_mock_fleet(count, positions)
+            state._desired_airsim_fleet_count = count
+            try:
+                _persist_fleet_count(count)
+            except OSError as exc:
+                logger.warning("Could not persist active fleet count: %s", exc)
+            socketio.emit("world_state", state.get_world_snapshot())
+            socketio.emit("skill_catalog", _get_skill_catalog())
+            socketio.emit("system_status", _get_system_status())
+            state.push_log(
+                "success",
+                f"Mock active fleet synchronized: {count}/{min(_AIRSIM_POOL_SIZE, 10)} UAV(s)",
+            )
+            return jsonify(result)
 
         expected = [f"Drone_{index}" for index in range(1, _AIRSIM_POOL_SIZE + 1)]
         actual = []
@@ -2062,6 +2200,31 @@ def api_fleet():
         return jsonify({"ok": False, "error": f"Invalid fleet request: {exc}"}), 400
     finally:
         _fleet_sync_lock.release()
+
+
+def _resize_fleet_from_skill(count, reason="", robot_id="UAV_1"):
+    """Run the shared fleet API for an audited LLM-issued resource decision."""
+    with app.app_context():
+        response = _handle_fleet_request(
+            {"count": count},
+            allow_during_ai=True,
+            allowed_busy_robots={robot_id},
+        )
+        if isinstance(response, tuple):
+            flask_response, status_code = response
+        else:
+            flask_response = response
+            status_code = getattr(response, "status_code", 200)
+        payload = flask_response.get_json(silent=True) or {}
+    payload["status_code"] = int(status_code)
+    payload["reason"] = str(reason or "")
+    if payload.get("ok"):
+        state.push_log(
+            "info",
+            f"LLM selected {payload.get('active_count', count)} active UAV(s): {reason}",
+            {"skill": "set_fleet_size", "robot": robot_id},
+        )
+    return payload
 
 
 @app.route("/api/adapter/status", methods=["GET"])
