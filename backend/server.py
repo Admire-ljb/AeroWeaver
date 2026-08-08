@@ -482,6 +482,10 @@ def _build_robot_registry(robot_id: str, robot_type: str):
     from skills.swarm_skills import (
         SwarmAreaSearch, SwarmRendezvous, SwarmFormationHold, SwarmOrbitHold,
     )
+    from skills.mission_skills import (
+        SwarmPerimeterPatrol, SwarmWaypointInspection,
+        SwarmRelayDeploy, SwarmEscortRoute,
+    )
     from skills.perception_skills import (
         DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe, Perceive,
     )
@@ -496,6 +500,8 @@ def _build_robot_registry(robot_id: str, robot_type: str):
         GetPosition, GetBattery, ReturnToLaunch,
         LookAround, MarkLocation, GetMarks, OrbitInspect,
         SwarmAreaSearch, SwarmRendezvous, SwarmFormationHold, SwarmOrbitHold,
+        SwarmPerimeterPatrol, SwarmWaypointInspection,
+        SwarmRelayDeploy, SwarmEscortRoute,
         # 软技能不再注册 Python 类，改为文档驱动 (skills/soft_docs/*.md)
         DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe, Perceive,
         # 认知技能（信息层）
@@ -3063,6 +3069,10 @@ def on_device_action_result(data):
 
 _SWARM_SKILL_NAMES = frozenset({
     "swarm_area_search",
+    "swarm_perimeter_patrol",
+    "swarm_waypoint_inspection",
+    "swarm_relay_deploy",
+    "swarm_escort_route",
     "swarm_rendezvous",
     "swarm_formation_hold",
     "swarm_orbit_hold",

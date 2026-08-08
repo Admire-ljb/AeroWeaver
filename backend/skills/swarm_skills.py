@@ -604,7 +604,8 @@ class SwarmAreaSearch(Skill):
     output_schema = {
         "search_paths": "per-UAV lawnmower waypoints",
         "coverage_percent": "simulated rectangular area coverage",
-        "completion_summary": "human-readable terminal mission summary",
+        "completion_summary": "English terminal mission summary",
+        "completion_summary_zh": "Chinese terminal mission summary",
         "final_positions": "per-UAV final positions",
     }
 
@@ -710,6 +711,10 @@ class SwarmAreaSearch(Skill):
                     "searched_area_m2": round(width * height, 2),
                     "coverage_percent": 100.0,
                     "completion_summary": (
+                        f"Area search complete: {len(robot_ids)} UAVs covered "
+                        f"{width * height:.0f} square meters at 100%."
+                    ),
+                    "completion_summary_zh": (
                         f"区域搜索完成：{len(robot_ids)} 架无人机已覆盖 "
                         f"{width * height:.0f} 平方米，覆盖率 100%。"
                     ),
