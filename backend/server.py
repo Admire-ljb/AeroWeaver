@@ -3069,6 +3069,10 @@ def on_device_action_result(data):
 
 _SWARM_SKILL_NAMES = frozenset({
     "swarm_area_search",
+    "swarm_perimeter_patrol",
+    "swarm_waypoint_inspection",
+    "swarm_relay_deploy",
+    "swarm_escort_route",
     "swarm_rendezvous",
     "swarm_formation_hold",
     "swarm_orbit_hold",

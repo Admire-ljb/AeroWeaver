@@ -14,9 +14,18 @@ from skills.mission_skills import (
     build_relay_positions,
 )
 from skills.swarm_skills import minimum_separation
+from server import _SWARM_SKILL_NAMES
 
 
 class MissionPathPlannerTests(unittest.TestCase):
+    def test_mission_skills_reserve_the_full_fleet(self):
+        self.assertTrue({
+            "swarm_perimeter_patrol",
+            "swarm_waypoint_inspection",
+            "swarm_relay_deploy",
+            "swarm_escort_route",
+        }.issubset(_SWARM_SKILL_NAMES))
+
     def test_perimeter_paths_use_distinct_phases(self):
         paths = build_perimeter_patrol_paths(
             ["UAV_1", "UAV_2", "UAV_3", "UAV_4"],
