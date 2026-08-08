@@ -54,10 +54,22 @@ def formation_offsets(count: int, formation: str, spacing: float) -> list[tuple[
             rank = (index + 1) // 2
             side = -1.0 if index % 2 else 1.0
             raw.append((spacing - rank * spacing, side * rank * spacing))
-    else:
+    elif kind in {"triangle", "triangular", "wedge"}:
+        row_height = spacing * math.sqrt(3.0) / 2.0
+        raw = []
+        row = 0
+        while len(raw) < count:
+            row_count = min(row + 1, count - len(raw))
+            for column in range(row_count):
+                raw.append(
+                    (
+                        -row * row_height,
+                        (column - row / 2.0) * spacing,
+                    )
+                )
+            row += 1
+    elif kind in {"circle", "ring"}:
         radius = spacing / (2.0 * math.sin(math.pi / count))
-        if kind in {"triangle", "wedge"} and count == 3:
-            radius = spacing / math.sqrt(3.0)
         raw = [
             (
                 radius * math.cos(math.pi / 2.0 + 2.0 * math.pi * index / count),
@@ -65,6 +77,8 @@ def formation_offsets(count: int, formation: str, spacing: float) -> list[tuple[
             )
             for index in range(count)
         ]
+    else:
+        raise ValueError(f"Unsupported formation: {formation}")
 
     mean_n = sum(item[0] for item in raw) / count
     mean_e = sum(item[1] for item in raw) / count
@@ -111,6 +125,60 @@ def build_area_search_paths(
             waypoints.append((end_n, lane_e, center_d))
         paths[robot_id] = waypoints
     return paths
+
+
+def build_formation_search_paths(
+    robot_ids,
+    center_position,
+    area_width,
+    area_height,
+    tracks_per_uav=4,
+    formation="triangle",
+    spacing=12.0,
+):
+    """Translate one bounded lawnmower route while preserving formation offsets."""
+    robots = sorted([str(robot_id) for robot_id in robot_ids], key=_robot_sort_key)
+    if not robots:
+        return {}, [], []
+
+    center_n, center_e, center_d = [float(value) for value in center_position[:3]]
+    width = max(float(area_width), 1.0)
+    height = max(float(area_height), 1.0)
+    tracks = max(2, int(tracks_per_uav))
+    offsets = formation_offsets(len(robots), formation, spacing)
+
+    min_offset_n = min(offset[0] for offset in offsets)
+    max_offset_n = max(offset[0] for offset in offsets)
+    min_offset_e = min(offset[1] for offset in offsets)
+    max_offset_e = max(offset[1] for offset in offsets)
+    south = center_n - height / 2.0 - min_offset_n
+    north = center_n + height / 2.0 - max_offset_n
+    west = center_e - width / 2.0 - min_offset_e
+    east = center_e + width / 2.0 - max_offset_e
+    if south > north or west > east:
+        footprint_width = max_offset_e - min_offset_e
+        footprint_height = max_offset_n - min_offset_n
+        raise ValueError(
+            "Search area is too small for the requested formation: "
+            f"need at least {footprint_width:.1f}m x {footprint_height:.1f}m"
+        )
+
+    center_path = []
+    for track_index in range(tracks):
+        ratio = track_index / (tracks - 1)
+        lane_e = west + (east - west) * ratio
+        start_n, end_n = (south, north) if track_index % 2 == 0 else (north, south)
+        center_path.append((start_n, lane_e, center_d))
+        center_path.append((end_n, lane_e, center_d))
+
+    paths = {
+        robot_id: [
+            (point[0] + offsets[index][0], point[1] + offsets[index][1], point[2])
+            for point in center_path
+        ]
+        for index, robot_id in enumerate(robots)
+    }
+    return paths, center_path, offsets
 
 
 def interpolate_polyline(points, progress):
@@ -586,7 +654,10 @@ def execute_swarm_motion(input_data: dict, default_formation: str, default_post_
 
 class SwarmAreaSearch(Skill):
     name = "swarm_area_search"
-    description = "Use all selected UAVs to cover a rectangular area with parallel lawnmower search tracks in Mock mode."
+    description = (
+        "Cover a rectangular area with independent tracks or preserve an explicitly "
+        "requested triangle, circle, line, or V formation in Mock mode."
+    )
     skill_type = "hard"
     robot_type = ["UAV"]
     preconditions = []
@@ -599,11 +670,15 @@ class SwarmAreaSearch(Skill):
         "area_height": "search-area north-south height in meters",
         "altitude": "positive mock flight altitude in meters when D is omitted",
         "speed": "visual search speed in m/s",
-        "tracks_per_uav": "parallel scan tracks assigned to each UAV",
+        "tracks_per_uav": "number of parallel scan passes",
+        "formation": "coverage | triangle | circle | line | v",
+        "formation_spacing": "minimum formation slot spacing in meters",
     }
     output_schema = {
-        "search_paths": "per-UAV lawnmower waypoints",
+        "search_paths": "per-UAV search waypoints",
         "coverage_percent": "simulated rectangular area coverage",
+        "formation": "executed coverage or rigid-formation mode",
+        "formation_preserved": "whether requested offsets were preserved during search",
         "completion_summary": "English terminal mission summary",
         "completion_summary_zh": "Chinese terminal mission summary",
         "final_positions": "per-UAV final positions",
@@ -649,6 +724,30 @@ class SwarmAreaSearch(Skill):
             height = max(20.0, min(float(input_data.get("area_height", 60.0)), 300.0))
             speed = max(2.0, min(float(input_data.get("speed", 20.0)), 40.0))
             tracks = max(2, min(int(input_data.get("tracks_per_uav", 4)), 8))
+            spacing = max(
+                6.0,
+                min(
+                    float(input_data.get("formation_spacing", input_data.get("spacing", 12.0))),
+                    50.0,
+                ),
+            )
+            formation_aliases = {
+                "none": "coverage",
+                "independent": "coverage",
+                "parallel": "coverage",
+                "triangular": "triangle",
+                "wedge": "triangle",
+                "\u4e09\u89d2\u5f62": "triangle",
+                "\u4e09\u89d2\u9635\u5217": "triangle",
+                "\u5706\u5f62": "circle",
+                "\u76f4\u7ebf": "line",
+            }
+            requested_formation = str(input_data.get("formation") or "coverage").strip().lower()
+            formation = formation_aliases.get(requested_formation, requested_formation)
+            if formation not in {"coverage", "triangle", "circle", "line", "v", "vee"}:
+                raise ValueError(f"Unsupported search formation: {requested_formation}")
+            if formation == "vee":
+                formation = "v"
 
             assigned_ids = sorted(
                 robot_ids,
@@ -658,49 +757,188 @@ class SwarmAreaSearch(Skill):
                     _robot_sort_key(robot_id),
                 ),
             )
-            search_paths = build_area_search_paths(assigned_ids, center, width, height, tracks)
-            full_paths = {
-                robot_id: [tuple(snapshot[robot_id]["position"])] + search_paths[robot_id]
+            center_path = []
+            offsets = []
+            if formation == "coverage":
+                search_paths = build_area_search_paths(assigned_ids, center, width, height, tracks)
+            else:
+                search_paths, center_path, offsets = build_formation_search_paths(
+                    assigned_ids,
+                    center,
+                    width,
+                    height,
+                    tracks,
+                    formation,
+                    spacing,
+                )
+
+            initial_positions = {
+                robot_id: tuple(snapshot[robot_id]["position"])
                 for robot_id in robot_ids
             }
-            max_distance = max(_polyline_length(path) for path in full_paths.values())
+            max_distance = max(
+                math.dist(initial_positions[robot_id], search_paths[robot_id][0])
+                + _polyline_length(search_paths[robot_id])
+                for robot_id in robot_ids
+            )
             requested_duration = input_data.get("visual_duration")
             if requested_duration is None:
                 visual_duration = max(4.0, min(max_distance / speed, 14.0))
             else:
                 visual_duration = max(0.1, min(float(requested_duration), 30.0))
-            frame_rate = 10.0
-            frames = max(2, int(math.ceil(visual_duration * frame_rate)))
-            frame_seconds = visual_duration / frames
-            previous = {
-                robot_id: tuple(snapshot[robot_id]["position"])
-                for robot_id in robot_ids
-            }
-            minimum_observed = minimum_separation(previous.values())
 
-            for frame in range(frames + 1):
-                progress = frame / frames
-                current = {}
+            frame_rate = 10.0
+            previous = dict(initial_positions)
+            minimum_observed = minimum_separation(previous.values())
+            max_formation_error = 0.0
+
+            def apply_frame(current, frame_seconds, moving=True):
+                nonlocal previous, minimum_observed
+                safe_seconds = max(frame_seconds, 1e-6)
                 for robot_id in robot_ids:
-                    point = interpolate_polyline(full_paths[robot_id], progress)
+                    point = current[robot_id]
                     velocity = [
-                        (point[axis] - previous[robot_id][axis]) / frame_seconds
+                        (point[axis] - previous[robot_id][axis]) / safe_seconds
                         for axis in range(3)
-                    ] if frame > 0 else [0.0, 0.0, 0.0]
+                    ]
                     set_position(
                         robot_id,
                         *point,
                         velocity=velocity,
-                        moving=frame < frames,
+                        moving=moving,
                         in_air=True,
                     )
-                    current[robot_id] = point
-                minimum_observed = min(minimum_observed, minimum_separation(current.values()))
+                minimum_observed = min(
+                    minimum_observed,
+                    minimum_separation(current.values()),
+                )
                 previous = current
-                if frame < frames:
-                    time.sleep(frame_seconds)
+
+            def animate_targets(targets, duration):
+                frames = max(1, int(math.ceil(duration * frame_rate)))
+                frame_seconds = duration / frames
+                starts = dict(previous)
+                for frame in range(1, frames + 1):
+                    progress = frame / frames
+                    current = {
+                        robot_id: tuple(
+                            starts[robot_id][axis]
+                            + (targets[robot_id][axis] - starts[robot_id][axis]) * progress
+                            for axis in range(3)
+                        )
+                        for robot_id in robot_ids
+                    }
+                    apply_frame(current, frame_seconds)
+                    if frame_seconds > 0:
+                        time.sleep(frame_seconds)
+
+            if formation == "coverage":
+                frames = max(2, int(math.ceil(visual_duration * frame_rate)))
+                frame_seconds = visual_duration / frames
+                full_paths = {
+                    robot_id: [initial_positions[robot_id]] + search_paths[robot_id]
+                    for robot_id in robot_ids
+                }
+                for frame in range(1, frames + 1):
+                    progress = frame / frames
+                    current = {
+                        robot_id: interpolate_polyline(full_paths[robot_id], progress)
+                        for robot_id in robot_ids
+                    }
+                    apply_frame(current, frame_seconds, moving=frame < frames)
+                    if frame < frames:
+                        time.sleep(frame_seconds)
+            else:
+                first_slots = {
+                    robot_id: search_paths[robot_id][0]
+                    for robot_id in robot_ids
+                }
+                vertical_gap = max(4.0, spacing * 0.55)
+                transit_base = min(
+                    [center_d] + [position[2] for position in initial_positions.values()]
+                ) - max(8.0, spacing)
+                altitude_targets = {
+                    robot_id: (
+                        initial_positions[robot_id][0],
+                        initial_positions[robot_id][1],
+                        transit_base - index * vertical_gap,
+                    )
+                    for index, robot_id in enumerate(robot_ids)
+                }
+                lane_targets = {
+                    robot_id: (
+                        first_slots[robot_id][0],
+                        first_slots[robot_id][1],
+                        altitude_targets[robot_id][2],
+                    )
+                    for robot_id in robot_ids
+                }
+                animate_targets(altitude_targets, visual_duration * 0.08)
+                animate_targets(lane_targets, visual_duration * 0.17)
+                animate_targets(first_slots, visual_duration * 0.10)
+
+                search_duration = visual_duration * 0.65
+                frames = max(2, int(math.ceil(search_duration * frame_rate)))
+                frame_seconds = search_duration / frames
+                formation_ids = sorted(robot_ids, key=_robot_sort_key)
+                offset_by_robot = {
+                    robot_id: offsets[index]
+                    for index, robot_id in enumerate(formation_ids)
+                }
+                for frame in range(1, frames + 1):
+                    progress = frame / frames
+                    center_point = interpolate_polyline(center_path, progress)
+                    current = {
+                        robot_id: interpolate_polyline(search_paths[robot_id], progress)
+                        for robot_id in robot_ids
+                    }
+                    apply_frame(current, frame_seconds, moving=frame < frames)
+                    frame_error = max(
+                        math.hypot(
+                            current[robot_id][0] - center_point[0] - offset_by_robot[robot_id][0],
+                            current[robot_id][1] - center_point[1] - offset_by_robot[robot_id][1],
+                        )
+                        for robot_id in robot_ids
+                    )
+                    max_formation_error = max(max_formation_error, frame_error)
+                    if frame < frames:
+                        time.sleep(frame_seconds)
+
+                final_minimum = minimum_separation(previous.values())
+                if final_minimum < spacing - 0.05:
+                    raise RuntimeError(
+                        f"Formation separation verification failed: {final_minimum:.2f}m"
+                    )
 
             final_snapshot = get_snapshot()
+            formation_preserved = (
+                formation != "coverage" and max_formation_error <= 0.05
+            )
+            formation_name_zh = {
+                "triangle": "\u4e09\u89d2\u5f62",
+                "circle": "\u5706\u5f62",
+                "line": "\u76f4\u7ebf",
+                "v": "V \u5f62",
+            }.get(formation, formation)
+            if formation == "coverage":
+                completion_summary = (
+                    f"Area search complete: {len(robot_ids)} UAVs covered "
+                    f"{width * height:.0f} square meters at 100%."
+                )
+                completion_summary_zh = (
+                    f"\u533a\u57df\u641c\u7d22\u5b8c\u6210\uff1a{len(robot_ids)} \u67b6\u65e0\u4eba\u673a\u5df2\u8986\u76d6 "
+                    f"{width * height:.0f} \u5e73\u65b9\u7c73\uff0c\u8986\u76d6\u7387 100%\u3002"
+                )
+            else:
+                completion_summary = (
+                    f"Formation area search complete: {len(robot_ids)} UAVs preserved "
+                    f"a {formation} formation while covering {width * height:.0f} square meters."
+                )
+                completion_summary_zh = (
+                    f"\u7f16\u961f\u533a\u57df\u641c\u7d22\u5b8c\u6210\uff1a{len(robot_ids)} \u67b6\u65e0\u4eba\u673a\u5168\u7a0b\u4fdd\u6301 "
+                    f"{formation_name_zh} \u7f16\u961f\uff0c\u5df2\u8986\u76d6 {width * height:.0f} \u5e73\u65b9\u7c73\u3002"
+                )
+
             return SkillResult(
                 success=True,
                 output={
@@ -710,20 +948,23 @@ class SwarmAreaSearch(Skill):
                     "area_height_m": round(height, 2),
                     "searched_area_m2": round(width * height, 2),
                     "coverage_percent": 100.0,
-                    "completion_summary": (
-                        f"Area search complete: {len(robot_ids)} UAVs covered "
-                        f"{width * height:.0f} square meters at 100%."
-                    ),
-                    "completion_summary_zh": (
-                        f"区域搜索完成：{len(robot_ids)} 架无人机已覆盖 "
-                        f"{width * height:.0f} 平方米，覆盖率 100%。"
-                    ),
+                    "formation": formation,
+                    "formation_spacing_m": round(spacing, 2) if formation != "coverage" else None,
+                    "formation_preserved": formation_preserved,
+                    "max_formation_error_m": round(max_formation_error, 3),
+                    "completion_summary": completion_summary,
+                    "completion_summary_zh": completion_summary_zh,
                     "tracks_per_uav": tracks,
                     "minimum_observed_separation_m": round(minimum_observed, 2),
                     "search_paths": {
                         robot_id: [[round(value, 2) for value in point] for point in search_paths[robot_id]]
                         for robot_id in sorted(robot_ids, key=_robot_sort_key)
                     },
+                    "formation_center_path": (
+                        [[round(value, 2) for value in point] for point in center_path]
+                        if center_path
+                        else []
+                    ),
                     "final_positions": {
                         robot_id: [round(value, 2) for value in final_snapshot[robot_id]["position"]]
                         for robot_id in sorted(robot_ids, key=_robot_sort_key)
@@ -732,7 +973,10 @@ class SwarmAreaSearch(Skill):
                 },
                 cost_time=round(time.time() - started, 3),
                 logs=[
-                    f"Mock area search complete: {len(robot_ids)} UAVs covered {width * height:.0f} m2"
+                    (
+                        f"Mock {formation} area search complete: {len(robot_ids)} UAVs "
+                        f"covered {width * height:.0f} m2"
+                    )
                 ],
             )
         except Exception as exc:

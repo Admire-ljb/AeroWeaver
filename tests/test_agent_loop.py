@@ -2,7 +2,11 @@ import json
 import threading
 from types import SimpleNamespace
 
-from brain.agent_loop import AgentLoop
+from brain.agent_loop import (
+    AGENT_SYSTEM_PROMPT,
+    AgentLoop,
+    _enforce_goal_action_constraints,
+)
 from skills.base_skill import SkillResult
 
 
@@ -109,3 +113,20 @@ def test_preexisting_stop_does_not_increment_reasoning_round():
     assert runtime.calls == []
     assert loop.iteration == 0
     assert completed == [(False, "操作员中止")]
+
+def test_explicit_search_formation_is_a_hard_constraint():
+    assert "explicitly requested formation is a hard mission constraint" in AGENT_SYSTEM_PROMPT
+    assert 'formation="triangle"' in AGENT_SYSTEM_PROMPT
+    assert 'formation="coverage"' in AGENT_SYSTEM_PROMPT
+    assert "verify formation_preserved" in AGENT_SYSTEM_PROMPT
+
+def test_goal_constraint_restores_triangle_parameter_before_dispatch():
+    parameters = _enforce_goal_action_constraints(
+        "\u8981\u6c426\u67b6\u65e0\u4eba\u673a\u7ec4\u6210\u4e09\u89d2\u5f62\u9635\u5217\u6267\u884c\u641c\u7d22",
+        "swarm_area_search",
+        {"formation": "coverage", "area_width": 100},
+    )
+
+    assert parameters["formation"] == "triangle"
+    assert parameters["formation_spacing"] == 12.0
+    assert parameters["area_width"] == 100

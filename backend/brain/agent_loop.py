@@ -34,8 +34,11 @@ Swarm area-search rule:
 - When the operator explicitly asks multiple UAVs to search, cover, sweep, or reconnoiter an area, call swarm_area_search once.
 - Use every active UAV unless the operator gives a count or an explicit UAV list.
 - Put all participating IDs in robot_ids and choose a bounded rectangular area_center, area_width, and area_height.
+- An explicitly requested formation is a hard mission constraint. Pass triangle, circle, line, or v through the formation parameter of swarm_area_search and set a safe formation_spacing.
+- Map triangular, triangle array, and Chinese 三角形/三角阵列 requests to formation="triangle". Never replace an explicit formation with independent coverage tracks.
+- When no formation is requested, use formation="coverage" for independent parallel scan tracks.
 - Do not decompose a swarm search into repeated single-UAV fly_to calls.
-- After swarm_area_search succeeds, summarize the coverage and finish the task.
+- After swarm_area_search succeeds, verify formation_preserved when a formation was requested, summarize the coverage, and finish the task.
 - For a boundary patrol, use swarm_perimeter_patrol.
 - For multiple inspection points, use swarm_waypoint_inspection.
 - For an airborne communication chain, use swarm_relay_deploy.
@@ -329,6 +332,53 @@ def _parse_agent_output(raw):
     return None
 
 
+_FORMATION_GOAL_PATTERNS = (
+    (
+        "triangle",
+        re.compile(
+            r"triangle|triangular|\u4e09\u89d2(?:\u5f62|\u9635\u5217|\u7f16\u961f)?",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "circle",
+        re.compile(
+            r"(?:circle|circular)\s+formation|\u5706\u5f62(?:\u9635\u5217|\u7f16\u961f)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "line",
+        re.compile(
+            r"(?:line|linear)\s+formation|\u76f4\u7ebf(?:\u9635\u5217|\u7f16\u961f)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "v",
+        re.compile(
+            r"\bv[- ]?(?:shape|formation)\b|V\u5f62(?:\u9635\u5217|\u7f16\u961f)",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def _enforce_goal_action_constraints(goal, skill_name, parameters):
+    """Restore explicit operator constraints that must survive LLM planning."""
+    normalized = dict(parameters) if isinstance(parameters, dict) else {}
+    if skill_name != "swarm_area_search":
+        return normalized
+
+    goal_text = str(goal or "")
+    for formation, pattern in _FORMATION_GOAL_PATTERNS:
+        if pattern.search(goal_text):
+            normalized["formation"] = formation
+            normalized.setdefault("formation_spacing", 12.0)
+            break
+    return normalized
+
+
 class AgentLoop:
     """
     自主智能体循环。
@@ -590,7 +640,11 @@ class AgentLoop:
 
             # 4. 执行动作
             skill_name = action.get("skill", "")
-            parameters = action.get("parameters", {})
+            parameters = _enforce_goal_action_constraints(
+                self.goal,
+                skill_name,
+                action.get("parameters", {}),
+            )
             robot_id = action.get("robot", "UAV_1")
 
             if not skill_name:

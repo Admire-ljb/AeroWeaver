@@ -9,6 +9,7 @@ from skills.swarm_skills import (
     SwarmOrbitHold,
     SwarmRendezvous,
     build_area_search_paths,
+    build_formation_search_paths,
     formation_offsets,
     minimum_separation,
 )
@@ -80,6 +81,56 @@ class SwarmPlannerTests(unittest.TestCase):
             self.assertGreaterEqual(minimum_separation(positions), 9.99)
             self.assertAlmostEqual(sum(point[0] for point in offsets), 0.0, places=6)
             self.assertAlmostEqual(sum(point[1] for point in offsets), 0.0, places=6)
+
+    def test_six_uavs_form_one_two_three_triangle_rows(self):
+        offsets = formation_offsets(6, "triangle", 12.0)
+        rows = {}
+        for north, east in offsets:
+            rows.setdefault(round(north, 6), []).append(east)
+
+        self.assertEqual(sorted(len(columns) for columns in rows.values()), [1, 2, 3])
+        self.assertGreaterEqual(
+            minimum_separation([(north, east, -20.0) for north, east in offsets]),
+            11.99,
+        )
+
+    def test_partial_triangle_rows_keep_requested_spacing(self):
+        for count in range(2, 11):
+            offsets = formation_offsets(count, "triangle", 12.0)
+            self.assertGreaterEqual(
+                minimum_separation([(north, east, -20.0) for north, east in offsets]),
+                11.99,
+                f"triangle spacing failed for {count} UAVs",
+            )
+
+    def test_formation_search_translates_one_rigid_triangle(self):
+        paths, center_path, offsets = build_formation_search_paths(
+            [f"UAV_{index}" for index in range(1, 7)],
+            [30.0, 30.0, -15.0],
+            100.0,
+            80.0,
+            tracks_per_uav=4,
+            formation="triangle",
+            spacing=12.0,
+        )
+
+        self.assertEqual(len(paths), 6)
+        self.assertEqual(len(center_path), 8)
+        robots = sorted(paths)
+        for waypoint_index, center in enumerate(center_path):
+            positions = [paths[robot_id][waypoint_index] for robot_id in robots]
+            self.assertGreaterEqual(minimum_separation(positions), 11.99)
+            self.assertAlmostEqual(
+                sum(position[0] for position in positions) / len(positions),
+                center[0],
+                places=6,
+            )
+            self.assertAlmostEqual(
+                sum(position[1] for position in positions) / len(positions),
+                center[1],
+                places=6,
+            )
+        self.assertEqual(len(offsets), 6)
 
     def test_circle_spacing_scales_for_larger_fleet(self):
         offsets = formation_offsets(8, "circle", 7.0)
@@ -188,6 +239,37 @@ class MockAreaSearchExecutionTests(unittest.TestCase):
         adapter_manager._close_robot_adapters()
         adapter_manager._adapter = self.previous_adapter
         adapter_manager._adapter_connection_str = self.previous_connection
+
+    def test_six_uavs_preserve_triangle_during_area_search(self):
+        adapter_manager._adapter.seed_fleet({
+            "UAV_5": {"position": [36, 0, -12], "battery": 84, "in_air": True},
+            "UAV_6": {"position": [36, 18, -12], "battery": 81, "in_air": True},
+        })
+        result = SwarmAreaSearch().execute({
+            "robot_ids": "UAV_1,UAV_2,UAV_3,UAV_4,UAV_5,UAV_6",
+            "area_center": [40, 40, -15],
+            "area_width": 100,
+            "area_height": 80,
+            "speed": 20,
+            "tracks_per_uav": 4,
+            "formation": "triangle",
+            "formation_spacing": 12,
+            "visual_duration": 0.1,
+        })
+
+        self.assertTrue(result.success, result.error_msg)
+        self.assertEqual(result.output["formation"], "triangle")
+        self.assertIn(
+            "\u4e09\u89d2\u5f62\u7f16\u961f",
+            result.output["completion_summary_zh"].replace(" ", ""),
+        )
+        self.assertTrue(result.output["formation_preserved"])
+        self.assertLessEqual(result.output["max_formation_error_m"], 0.001)
+        self.assertEqual(len(result.output["search_paths"]), 6)
+        self.assertGreaterEqual(
+            minimum_separation(result.output["final_positions"].values()),
+            11.99,
+        )
 
     def test_four_uavs_visually_cover_one_area(self):
         result = SwarmAreaSearch().execute({
