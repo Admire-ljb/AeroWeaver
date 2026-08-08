@@ -63,6 +63,7 @@ class Skill(ABC):
     input_schema: dict = {}    # 例如 {"target_position": "[x,y,z] 目标三维坐标"}
     output_schema: dict = {}   # 例如 {"arrived_position": "[x,y,z] 实际到达坐标"}
     cost: float = 1.0
+    terminal_on_success: bool = False
 
     # ── 运行时状态（由 SkillRegistry 注入，子类不用管）──────────────────────
     last_execution_status: ExecutionStatus = "never"
@@ -118,6 +119,7 @@ class Skill(ABC):
             "input_schema": self.input_schema,
             "output_schema": self.output_schema,
             "cost": self.cost,
+            "terminal_on_success": self.terminal_on_success,
             "last_execution_status": self.last_execution_status,
             "doc_path": self.doc_path,
         }
@@ -138,6 +140,7 @@ class Skill(ABC):
             "robot_type": self.robot_type,
             "input_schema": self.input_schema,
             "output_schema": self.output_schema,
+            "terminal_on_success": self.terminal_on_success,
             "last_execution_status": self.last_execution_status,
             "doc_path": self.doc_path,
         }
