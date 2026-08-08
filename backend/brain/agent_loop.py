@@ -561,7 +561,7 @@ class AgentLoop:
             progress = output.get("goal_progress", "")
 
             self.on_thinking(self.iteration, output)
-            logger.info(f"[AgentLoop] 第{self.iteration}轮: {thinking[:60]}... → {decision}")
+            logger.info(f"[AgentLoop] 第{self.iteration}轮: {thinking} → {decision}")
 
             # 3. 判断是否结束
             if decision == "done":

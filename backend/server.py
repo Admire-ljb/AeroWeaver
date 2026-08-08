@@ -3326,13 +3326,13 @@ def on_ai_task(data):
                 })
                 socketio.emit("ai_thinking", {
                     "phase": "thinking",
-                    "detail": f"[第{iteration}轮] {thinking[:80]}",
+                    "detail": f"[第{iteration}轮] {thinking}",
                     "iteration": iteration,
                     "decision": decision,
                     "action": action,
                     "progress": progress,
                 })
-                state.push_log("info", f"🧠 第{iteration}轮: {thinking[:60]}...")
+                state.push_log("info", f"🧠 第{iteration}轮: {thinking}")
 
                 # 同时把 thinking 作为清洁文本推到 stream (而不是原始 JSON token)
                 socketio.emit("ai_stream", {"token": "", "done": True})  # 清空上一轮
@@ -3727,7 +3727,7 @@ def _run_agent_loop(goal, sid):
             })
             socketio.emit("ai_thinking", {
                 "phase": "thinking",
-                "detail": f"[第{iteration}轮] {thinking[:80]}",
+                "detail": f"[第{iteration}轮] {thinking}",
                 "decision": decision,
             })
             # 把思考过程推送到聊天
@@ -3736,7 +3736,7 @@ def _run_agent_loop(goal, sid):
                 "reply": f"💭 {thinking}" + (f"\n📊 {progress}" if progress else ""),
                 "message": goal,
             }, to=sid)
-            state.push_log("info", f"🧠 第{iteration}轮: {thinking[:60]}...")
+            state.push_log("info", f"🧠 第{iteration}轮: {thinking}")
 
         def on_action(iteration, skill, params, result):
             status = "✅" if result.success else "❌"
