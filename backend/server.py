@@ -480,7 +480,7 @@ def _build_robot_registry(robot_id: str, robot_type: str):
         FlyRelative, LookAround, MarkLocation, GetMarks, OrbitInspect,
     )
     from skills.swarm_skills import (
-        SwarmRendezvous, SwarmFormationHold, SwarmOrbitHold,
+        SwarmAreaSearch, SwarmRendezvous, SwarmFormationHold, SwarmOrbitHold,
     )
     from skills.perception_skills import (
         DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe, Perceive,
@@ -495,7 +495,7 @@ def _build_robot_registry(robot_id: str, robot_type: str):
         Takeoff, Land, FlyTo, FlyRelative, Hover, ChangeAltitude,
         GetPosition, GetBattery, ReturnToLaunch,
         LookAround, MarkLocation, GetMarks, OrbitInspect,
-        SwarmRendezvous, SwarmFormationHold, SwarmOrbitHold,
+        SwarmAreaSearch, SwarmRendezvous, SwarmFormationHold, SwarmOrbitHold,
         # 软技能不再注册 Python 类，改为文档驱动 (skills/soft_docs/*.md)
         DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe, Perceive,
         # 认知技能（信息层）
@@ -684,6 +684,10 @@ def _try_connect_adapter():
 
             adapter = get_adapter()
             if ok:
+                if sim_adapter == "mock":
+                    seed_fleet = getattr(adapter, "seed_fleet", None)
+                    if callable(seed_fleet) and state.world_model:
+                        seed_fleet(state.world_model.get_world_state().get("robots", {}))
                 state.push_log("success", f"✅ Adapter connected: {adapter.name}")
                 if sim_adapter in ("airsim", "airsim_physics"):
                     settle_fleet = getattr(adapter, "settle_active_fleet", None)
@@ -1004,7 +1008,7 @@ def _sync_airsim_fleet_to_world(
 def _start_telemetry_sync():
     """后台持续读取仿真遥测数据，同步到 WorldModel 并推送前端。"""
     sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
-    default_position_hz = 10.0 if sim_adapter in ("airsim", "airsim_physics") else 2.0
+    default_position_hz = 10.0 if sim_adapter in ("airsim", "airsim_physics", "mock") else 2.0
     try:
         position_hz = float(
             os.getenv("AIRSIM_TELEMETRY_HZ", str(default_position_hz))
@@ -1075,13 +1079,33 @@ def _start_telemetry_sync():
                             time.sleep(max(0.0, position_interval - elapsed))
                             continue
 
+                    if sim_adapter == "mock":
+                        get_snapshot = getattr(adapter, "get_robot_snapshot", None)
+                        fleet = get_snapshot() if callable(get_snapshot) else {}
+                        available = state.world_model.get_world_state().get("robots", {})
+                        update = {"robots": {}}
+                        for robot_id, telemetry in fleet.items():
+                            if robot_id not in available:
+                                continue
+                            raw_battery = float(telemetry.get("battery", 1.0))
+                            battery = raw_battery * 100.0 if raw_battery <= 1.0 else raw_battery
+                            moving = bool(telemetry.get("moving", False))
+                            in_air = bool(telemetry.get("in_air", False))
+                            update["robots"][robot_id] = {
+                                "battery": round(max(0.0, min(100.0, battery)), 1),
+                                "position": [round(float(value), 2) for value in telemetry.get("position", [0, 0, 0])[:3]],
+                                "in_air": in_air,
+                                "status": "executing" if moving or state.is_robot_executing(robot_id) else ("airborne" if in_air else "idle"),
+                            }
+                        if update["robots"]:
+                            state.world_model.update_world_state(update)
+                            socketio.emit("world_state", state.get_world_snapshot())
+                        elapsed = time.monotonic() - loop_started
+                        time.sleep(max(0.0, position_interval - elapsed))
+                        continue
+
                     st = adapter.get_state()
                     robot_id = "UAV_1"
-                    if sim_adapter == "mock":
-                        robots = state.world_model.get_world_state().get("robots", {})
-                        get_active_robot = getattr(adapter, "get_active_robot", None)
-                        active_robot = get_active_robot() if callable(get_active_robot) else state.current_robot
-                        robot_id = active_robot if active_robot in robots else next(iter(robots), "UAV_1")
                     update = {"robots": {robot_id: {}}}
 
                     if st.battery_percent > 0:
@@ -3038,6 +3062,7 @@ def on_device_action_result(data):
 
 
 _SWARM_SKILL_NAMES = frozenset({
+    "swarm_area_search",
     "swarm_rendezvous",
     "swarm_formation_hold",
     "swarm_orbit_hold",

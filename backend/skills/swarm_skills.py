@@ -30,6 +30,10 @@ def normalize_robot_ids(raw, primary_adapter=None) -> list[str]:
     if not robots and primary_adapter is not None:
         active = getattr(primary_adapter, "_pool_active_robots", None) or []
         robots = [str(item) for item in active if str(item).strip()]
+        if not robots:
+            get_snapshot = getattr(primary_adapter, "get_robot_snapshot", None)
+            snapshot = get_snapshot() if callable(get_snapshot) else {}
+            robots = [str(item) for item in snapshot if str(item).strip()]
     return sorted(robots, key=_robot_sort_key)
 
 
@@ -76,6 +80,66 @@ def minimum_separation(positions) -> float:
         for left in range(len(points))
         for right in range(left + 1, len(points))
     )
+
+
+def build_area_search_paths(
+    robot_ids,
+    center_position,
+    area_width,
+    area_height,
+    tracks_per_uav=4,
+):
+    """Divide a rectangle into parallel lawnmower-search strips."""
+    robots = sorted([str(robot_id) for robot_id in robot_ids], key=_robot_sort_key)
+    if not robots:
+        return {}
+    center_n, center_e, center_d = [float(value) for value in center_position[:3]]
+    width = max(float(area_width), 1.0)
+    height = max(float(area_height), 1.0)
+    tracks = max(2, int(tracks_per_uav))
+    cell_width = width / len(robots)
+    south = center_n - height / 2.0
+    north = center_n + height / 2.0
+    paths = {}
+    for robot_index, robot_id in enumerate(robots):
+        cell_left = center_e - width / 2.0 + robot_index * cell_width
+        waypoints = []
+        for track_index in range(tracks):
+            lane_e = cell_left + cell_width * (track_index + 0.5) / tracks
+            start_n, end_n = (south, north) if track_index % 2 == 0 else (north, south)
+            waypoints.append((start_n, lane_e, center_d))
+            waypoints.append((end_n, lane_e, center_d))
+        paths[robot_id] = waypoints
+    return paths
+
+
+def interpolate_polyline(points, progress):
+    """Interpolate one point at normalized cumulative distance along a path."""
+    points = [tuple(float(value) for value in point[:3]) for point in points]
+    if not points:
+        return (0.0, 0.0, 0.0)
+    if len(points) == 1:
+        return points[0]
+    progress = max(0.0, min(float(progress), 1.0))
+    lengths = [math.dist(points[index], points[index + 1]) for index in range(len(points) - 1)]
+    total = sum(lengths)
+    if total <= 1e-9:
+        return points[-1]
+    target = progress * total
+    traversed = 0.0
+    for index, length in enumerate(lengths):
+        if target <= traversed + length or index == len(lengths) - 1:
+            ratio = 0.0 if length <= 1e-9 else (target - traversed) / length
+            return tuple(
+                points[index][axis] + (points[index + 1][axis] - points[index][axis]) * ratio
+                for axis in range(3)
+            )
+        traversed += length
+    return points[-1]
+
+
+def _polyline_length(points):
+    return sum(math.dist(points[index], points[index + 1]) for index in range(len(points) - 1))
 
 
 def _position_tuple(position):
@@ -518,6 +582,159 @@ def execute_swarm_motion(input_data: dict, default_formation: str, default_post_
             cost_time=round(time.time() - started, 3),
             logs=[f"Swarm motion stopped safely: {exc}"],
         )
+
+
+class SwarmAreaSearch(Skill):
+    name = "swarm_area_search"
+    description = "Use all selected UAVs to cover a rectangular area with parallel lawnmower search tracks in Mock mode."
+    skill_type = "hard"
+    robot_type = ["UAV"]
+    preconditions = []
+    cost = 6.0
+    input_schema = {
+        "robot_ids": "UAV IDs separated by commas; defaults to every active UAV",
+        "area_center": "[N, E, D] search-area center; D is optional",
+        "area_width": "search-area east-west width in meters",
+        "area_height": "search-area north-south height in meters",
+        "altitude": "positive mock flight altitude in meters when D is omitted",
+        "speed": "visual search speed in m/s",
+        "tracks_per_uav": "parallel scan tracks assigned to each UAV",
+    }
+    output_schema = {
+        "search_paths": "per-UAV lawnmower waypoints",
+        "coverage_percent": "simulated rectangular area coverage",
+        "final_positions": "per-UAV final positions",
+    }
+
+    def execute(self, input_data: dict) -> SkillResult:
+        started = time.time()
+        from adapters.adapter_manager import get_primary_adapter
+
+        adapter = get_primary_adapter()
+        if adapter is None:
+            return SkillResult(success=False, error_msg="No simulation adapter")
+        if getattr(adapter, "name", "") != "mock":
+            return SkillResult(
+                success=False,
+                error_msg="swarm_area_search is currently a Mock-mode visualization skill",
+            )
+        get_snapshot = getattr(adapter, "get_robot_snapshot", None)
+        set_position = getattr(adapter, "set_robot_position", None)
+        if not callable(get_snapshot) or not callable(set_position):
+            return SkillResult(success=False, error_msg="Mock fleet animation API is unavailable")
+
+        snapshot = get_snapshot()
+        robot_ids = normalize_robot_ids(input_data.get("robot_ids"), adapter)
+        unknown = [robot_id for robot_id in robot_ids if robot_id not in snapshot]
+        if unknown:
+            return SkillResult(success=False, error_msg=f"Unknown mock UAVs: {', '.join(unknown)}")
+        if len(robot_ids) < 2:
+            return SkillResult(success=False, error_msg="At least two active UAVs are required")
+        if len(robot_ids) > 10:
+            return SkillResult(success=False, error_msg="A maximum of 10 UAVs is supported")
+
+        try:
+            center_raw = input_data.get("area_center") or input_data.get("center_position") or [30.0, 30.0]
+            if not isinstance(center_raw, (list, tuple)) or len(center_raw) < 2:
+                raise ValueError("area_center must contain at least [N, E]")
+            altitude = max(5.0, min(float(input_data.get("altitude", 12.0)), 60.0))
+            center_d = float(center_raw[2]) if len(center_raw) >= 3 else -altitude
+            if center_d >= 0:
+                center_d = -altitude
+            center = [float(center_raw[0]), float(center_raw[1]), center_d]
+            width = max(20.0, min(float(input_data.get("area_width", 80.0)), 300.0))
+            height = max(20.0, min(float(input_data.get("area_height", 60.0)), 300.0))
+            speed = max(2.0, min(float(input_data.get("speed", 20.0)), 40.0))
+            tracks = max(2, min(int(input_data.get("tracks_per_uav", 4)), 8))
+
+            assigned_ids = sorted(
+                robot_ids,
+                key=lambda robot_id: (
+                    float(snapshot[robot_id]["position"][1]),
+                    float(snapshot[robot_id]["position"][0]),
+                    _robot_sort_key(robot_id),
+                ),
+            )
+            search_paths = build_area_search_paths(assigned_ids, center, width, height, tracks)
+            full_paths = {
+                robot_id: [tuple(snapshot[robot_id]["position"])] + search_paths[robot_id]
+                for robot_id in robot_ids
+            }
+            max_distance = max(_polyline_length(path) for path in full_paths.values())
+            requested_duration = input_data.get("visual_duration")
+            if requested_duration is None:
+                visual_duration = max(4.0, min(max_distance / speed, 14.0))
+            else:
+                visual_duration = max(0.1, min(float(requested_duration), 30.0))
+            frame_rate = 10.0
+            frames = max(2, int(math.ceil(visual_duration * frame_rate)))
+            frame_seconds = visual_duration / frames
+            previous = {
+                robot_id: tuple(snapshot[robot_id]["position"])
+                for robot_id in robot_ids
+            }
+            minimum_observed = minimum_separation(previous.values())
+
+            for frame in range(frames + 1):
+                progress = frame / frames
+                current = {}
+                for robot_id in robot_ids:
+                    point = interpolate_polyline(full_paths[robot_id], progress)
+                    velocity = [
+                        (point[axis] - previous[robot_id][axis]) / frame_seconds
+                        for axis in range(3)
+                    ] if frame > 0 else [0.0, 0.0, 0.0]
+                    set_position(
+                        robot_id,
+                        *point,
+                        velocity=velocity,
+                        moving=frame < frames,
+                        in_air=True,
+                    )
+                    current[robot_id] = point
+                minimum_observed = min(minimum_observed, minimum_separation(current.values()))
+                previous = current
+                if frame < frames:
+                    time.sleep(frame_seconds)
+
+            final_snapshot = get_snapshot()
+            return SkillResult(
+                success=True,
+                output={
+                    "robots": sorted(robot_ids, key=_robot_sort_key),
+                    "area_center": [round(value, 2) for value in center],
+                    "area_width_m": round(width, 2),
+                    "area_height_m": round(height, 2),
+                    "searched_area_m2": round(width * height, 2),
+                    "coverage_percent": 100.0,
+                    "tracks_per_uav": tracks,
+                    "minimum_observed_separation_m": round(minimum_observed, 2),
+                    "search_paths": {
+                        robot_id: [[round(value, 2) for value in point] for point in search_paths[robot_id]]
+                        for robot_id in sorted(robot_ids, key=_robot_sort_key)
+                    },
+                    "final_positions": {
+                        robot_id: [round(value, 2) for value in final_snapshot[robot_id]["position"]]
+                        for robot_id in sorted(robot_ids, key=_robot_sort_key)
+                    },
+                    "mock_visualization_only": True,
+                },
+                cost_time=round(time.time() - started, 3),
+                logs=[
+                    f"Mock area search complete: {len(robot_ids)} UAVs covered {width * height:.0f} m2"
+                ],
+            )
+        except Exception as exc:
+            for robot_id in robot_ids:
+                last = get_snapshot().get(robot_id, {}).get("position")
+                if last:
+                    set_position(robot_id, *last, velocity=[0.0, 0.0, 0.0], moving=False, in_air=True)
+            return SkillResult(
+                success=False,
+                error_msg=str(exc),
+                cost_time=round(time.time() - started, 3),
+                logs=[f"Mock area search stopped: {exc}"],
+            )
 
 
 class SwarmRendezvous(Skill):
