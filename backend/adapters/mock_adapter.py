@@ -95,6 +95,23 @@ class MockAdapter(SimAdapter):
                 }
             self._restore_active_state()
 
+    def retain_fleet(self, robot_ids):
+        """Remove inactive robots while keeping at least one valid active robot."""
+        allowed = {str(robot_id) for robot_id in robot_ids if str(robot_id)}
+        if not allowed:
+            raise ValueError("Mock fleet must contain at least one robot")
+        with self._state_lock:
+            self._robot_states = {
+                robot_id: state
+                for robot_id, state in self._robot_states.items()
+                if robot_id in allowed
+            }
+            for robot_id in allowed:
+                self._robot_states.setdefault(robot_id, self._default_robot_state())
+            if self._active_robot not in self._robot_states:
+                self._active_robot = sorted(self._robot_states)[0]
+            self._restore_active_state()
+
     def get_robot_snapshot(self) -> dict:
         """Return a thread-safe snapshot for fleet telemetry synchronization."""
         with self._state_lock:
