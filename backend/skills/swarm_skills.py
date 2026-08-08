@@ -591,6 +591,7 @@ class SwarmAreaSearch(Skill):
     robot_type = ["UAV"]
     preconditions = []
     cost = 6.0
+    terminal_on_success = True
     input_schema = {
         "robot_ids": "UAV IDs separated by commas; defaults to every active UAV",
         "area_center": "[N, E, D] search-area center; D is optional",
@@ -603,6 +604,7 @@ class SwarmAreaSearch(Skill):
     output_schema = {
         "search_paths": "per-UAV lawnmower waypoints",
         "coverage_percent": "simulated rectangular area coverage",
+        "completion_summary": "human-readable terminal mission summary",
         "final_positions": "per-UAV final positions",
     }
 
@@ -707,6 +709,10 @@ class SwarmAreaSearch(Skill):
                     "area_height_m": round(height, 2),
                     "searched_area_m2": round(width * height, 2),
                     "coverage_percent": 100.0,
+                    "completion_summary": (
+                        f"区域搜索完成：{len(robot_ids)} 架无人机已覆盖 "
+                        f"{width * height:.0f} 平方米，覆盖率 100%。"
+                    ),
                     "tracks_per_uav": tracks,
                     "minimum_observed_separation_m": round(minimum_observed, 2),
                     "search_paths": {

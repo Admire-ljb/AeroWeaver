@@ -422,12 +422,12 @@ class AgentLoop:
         self.runtime_tactic = ""
 
         while self.iteration < self.max_iterations:
-            self.iteration += 1
-
             if self.stop_event and self.stop_event.is_set():
                 logger.info("[AgentLoop] 被操作员中止")
                 self.on_complete(False, "操作员中止")
                 return
+
+            self.iteration += 1
 
             # 1. 观察
             world_state = self.world_model.get_world_state()
@@ -628,6 +628,15 @@ class AgentLoop:
 
             status = "OK" if result.success else f"FAIL({result.error_msg})"
             logger.info(f"[AgentLoop] {skill_name} → {status} ({result.cost_time:.1f}s)")
+
+            registered_skill = self.skill_registry.get_skill(skill_name) if self.skill_registry else None
+            if result.success and getattr(registered_skill, "terminal_on_success", False):
+                output = result.output if isinstance(result.output, dict) else {}
+                summary = output.get("completion_summary") or f"{skill_name} 执行成功，任务完成。"
+                logger.info(f"[AgentLoop] 终结型技能完成任务: {skill_name}")
+                self.on_complete(True, summary)
+                self._update_memory(True)
+                return
 
             # 短暂等待, 让传感器更新
             time.sleep(0.5)
