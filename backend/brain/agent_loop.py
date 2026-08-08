@@ -36,6 +36,11 @@ Swarm area-search rule:
 - Put all participating IDs in robot_ids and choose a bounded rectangular area_center, area_width, and area_height.
 - Do not decompose a swarm search into repeated single-UAV fly_to calls.
 - After swarm_area_search succeeds, summarize the coverage and finish the task.
+- For a boundary patrol, use swarm_perimeter_patrol.
+- For multiple inspection points, use swarm_waypoint_inspection.
+- For an airborne communication chain, use swarm_relay_deploy.
+- For formation escort along a route, use swarm_escort_route.
+- Task-level swarm skills complete the mission automatically after a successful result. Do not repeat them.
 
 你就是一架智能无人机 (OR-1 / UAV_1)。你正在自主执行一个任务。
 
@@ -632,7 +637,13 @@ class AgentLoop:
             registered_skill = self.skill_registry.get_skill(skill_name) if self.skill_registry else None
             if result.success and getattr(registered_skill, "terminal_on_success", False):
                 output = result.output if isinstance(result.output, dict) else {}
-                summary = output.get("completion_summary") or f"{skill_name} 执行成功，任务完成。"
+                summary_key = "completion_summary_zh" if re.search(r"[\u3400-\u9fff]", self.goal) else "completion_summary"
+                summary = (
+                    output.get(summary_key)
+                    or output.get("completion_summary")
+                    or output.get("completion_summary_zh")
+                    or f"{skill_name} 执行成功，任务完成。"
+                )
                 logger.info(f"[AgentLoop] 终结型技能完成任务: {skill_name}")
                 self.on_complete(True, summary)
                 self._update_memory(True)
