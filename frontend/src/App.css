@@ -583,7 +583,7 @@
 
 .map-noise {
   position: absolute;
-  inset: 0;
+  inset: -400%;
   opacity: 0.34;
   background-image:
     linear-gradient(30deg, rgba(20, 226, 226, 0.12) 12%, transparent 12.5%, transparent 87%, rgba(20, 226, 226, 0.12) 87.5%),
@@ -684,34 +684,12 @@
   pointer-events: none;
 }
 
-.route-layer .map-origin-marker line {
-  stroke: rgba(255, 203, 74, 0.96);
-  stroke-width: 1.5;
-  stroke-dasharray: none;
-  stroke-linecap: round;
-  filter: drop-shadow(0 0 3px rgba(255, 183, 39, 0.72));
-  vector-effect: non-scaling-stroke;
-}
-
 .route-layer .map-origin-marker circle {
-  fill: #061724;
-  stroke: #ffd15c;
+  fill: #ffd15c;
+  stroke: rgba(4, 19, 31, 0.96);
   stroke-width: 2;
+  filter: drop-shadow(0 0 4px rgba(255, 183, 39, 0.9));
   vector-effect: non-scaling-stroke;
-}
-
-.route-layer .map-origin-marker text {
-  fill: #ffe8a3;
-  stroke: rgba(3, 12, 20, 0.96);
-  stroke-width: 0.45;
-  paint-order: stroke;
-  font-size: 2.4px;
-  font-weight: 900;
-  letter-spacing: 0;
-}
-
-.route-layer .map-origin-marker .origin-label {
-  font-size: 2.7px;
 }
 
 .route-layer polyline,
@@ -2404,12 +2382,7 @@ button.status-card {
 .map-world-base {
   z-index: 0;
   overflow: visible;
-  background:
-    linear-gradient(rgba(28, 218, 229, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(28, 218, 229, 0.04) 1px, transparent 1px),
-    linear-gradient(135deg, rgba(16, 128, 152, 0.22), rgba(2, 17, 31, 0.58)),
-    #061724;
-  background-size: 8px 8px, 8px 8px, auto, auto;
+  background: transparent;
 }
 
 .map-extent-grid {
@@ -2417,17 +2390,18 @@ button.status-card {
   inset: -400%;
   z-index: 0;
   background:
-    linear-gradient(rgba(28, 218, 229, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(28, 218, 229, 0.055) 1px, transparent 1px),
-    #04131f;
-  background-size: calc(100% / 180) calc(100% / 180);
+    linear-gradient(rgba(28, 218, 229, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(28, 218, 229, 0.045) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(12, 77, 94, 0.3), rgba(2, 17, 31, 0.68)),
+    #061724;
+  background-size: calc(100% / 180) calc(100% / 180), calc(100% / 180) calc(100% / 180), auto, auto;
   pointer-events: none;
 }
 
 .map-world-base::before {
   content: "";
   position: absolute;
-  inset: -6%;
+  inset: -400%;
   opacity: 0.62;
   background:
     repeating-linear-gradient(18deg, transparent 0 24px, rgba(16, 214, 224, 0.2) 25px 26px, transparent 27px 54px),
@@ -2436,26 +2410,18 @@ button.status-card {
 }
 
 .map-world-base::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse at 62% 43%, transparent 0 34%, rgba(2, 10, 19, 0.34) 58%, rgba(2, 10, 19, 0.72) 100%),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.24), transparent 23%, transparent 74%, rgba(0, 0, 0, 0.28));
-  pointer-events: none;
+  display: none;
 }
 
 .map-world-objects {
   z-index: 2;
 }
 
-.city-map.no-grid .map-world-base {
-  background:
-    linear-gradient(135deg, rgba(16, 128, 152, 0.22), rgba(2, 17, 31, 0.58)),
-    #061724;
+.city-map.no-grid .map-extent-grid {
+  background: linear-gradient(135deg, rgba(12, 77, 94, 0.3), rgba(2, 17, 31, 0.68)), #061724;
 }
 
-.city-map.scene-mode .map-world-base {
+.city-map.scene-mode .map-extent-grid {
   background: #020812;
 }
 
@@ -2463,9 +2429,6 @@ button.status-card {
   opacity: 0.04;
 }
 
-.city-map.scene-mode .map-world-base::after {
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.18), transparent 24%, transparent 70%, rgba(0, 0, 0, 0.2));
-}
 
 .city-map.can-pan {
   cursor: grab;
@@ -2484,10 +2447,9 @@ button.status-card {
   left: 20px;
   top: 86px;
   z-index: 12;
-  display: grid;
-  grid-template-columns: auto auto;
-  align-items: end;
-  gap: 3px 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
   min-width: 82px;
   padding: 7px 9px 6px;
   border: 1px solid rgba(150, 205, 235, 0.42);
@@ -2496,13 +2458,6 @@ button.status-card {
   background: rgba(4, 20, 34, 0.86);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
   pointer-events: none;
-}
-
-.map-scale-directions {
-  grid-column: 1 / -1;
-  color: rgba(199, 224, 240, 0.72);
-  font-size: 9px;
-  font-weight: 800;
 }
 
 .map-scale-rule {

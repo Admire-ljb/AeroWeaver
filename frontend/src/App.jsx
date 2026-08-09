@@ -1067,12 +1067,8 @@ function MissionMap({
           <div className="map-world map-world-objects" style={worldStyle}>
           <svg className="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
             <g className="map-origin-marker">
-              <line x1="50" y1="55" x2="50" y2="44" />
-              <line x1="45" y1="50" x2="56" y2="50" />
-              <circle cx="50" cy="50" r="0.8" />
-              <text className="origin-north" x="50.8" y="44.8">N+</text>
-              <text className="origin-east" x="56.2" y="49.2">E+</text>
-              <text className="origin-label" x="51.2" y="53.2">{t('\u539f\u70b9 (0,0)', 'Origin (0,0)')}</text>
+              <title>{t('\u539f\u70b9 (0,0)', 'Origin (0,0)')}</title>
+              <circle cx="50" cy="50" r="0.62" />
             </g>
             {displayTaskArea && (
               <>
@@ -1166,7 +1162,6 @@ function MissionMap({
           </div>
 
           <div className="map-scale-indicator" aria-label={t(`比例尺 ${formatScaleDistance(scaleBar.meters)}`, `Map scale ${formatScaleDistance(scaleBar.meters)}`)}>
-            <span className="map-scale-directions">N+ / E+</span>
             <span className="map-scale-rule" style={{ width: `${scaleBar.pixels}px` }} />
             <strong>{formatScaleDistance(scaleBar.meters)}</strong>
           </div>
