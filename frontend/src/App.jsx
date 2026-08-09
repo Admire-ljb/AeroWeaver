@@ -44,6 +44,7 @@ function logTagText(tag, language) {
   const labels = {
     User: ['用户', 'User'],
     System: ['系统', 'System'],
+    Assistant: ['助手', 'Assistant'],
     Execution: ['执行', 'Execution'],
     Notice: ['提示', 'Notice'],
     Error: ['错误', 'Error'],
@@ -603,34 +604,44 @@ function isRobotSelectionLog(entry) {
 }
 
 function buildTimeline(logs, chatHistory, language = DEFAULT_LANGUAGE) {
-  const fromChat = (chatHistory || []).slice(-8).map((msg) => {
+  const timestampOf = (value) => {
+    const timestamp = value ? new Date(value).getTime() : Date.now()
+    return Number.isFinite(timestamp) ? timestamp : Date.now()
+  }
+  const fromChat = (chatHistory || []).slice(-10).map((msg) => {
     const isUser = msg.role === 'user'
     const isResult = msg.intent === 'RESULT'
     return {
+      timestamp: timestampOf(msg.ts || msg.time),
       time: formatLogTime(msg.ts || msg.time),
-      tag: isUser ? 'User' : isResult ? 'Result' : 'System',
-      tone: isUser ? 'user' : isResult ? 'result' : 'system',
+      tag: isUser ? 'User' : isResult ? 'Result' : 'Assistant',
+      tone: isUser ? 'user' : isResult ? 'result' : 'assistant',
       text: msg.content || '',
+      source: 'chat',
     }
   })
 
-  const fromLogs = (logs || []).filter((entry) => !isRobotSelectionLog(entry)).slice(-12).map((entry) => {
+  const fromLogs = (logs || []).filter((entry) => !isRobotSelectionLog(entry)).slice(-16).map((entry) => {
     const text = logEntryText(entry, language)
     const level = typeof entry === 'object' ? entry.level : 'info'
     const presentation = logPresentation(level)
     return {
+      timestamp: timestampOf(entry.ts || entry.time),
       time: formatLogTime(entry.ts || entry.time),
       tag: presentation.tag,
       tone: presentation.tone,
       text,
+      source: 'log',
     }
   })
 
-  const merged = [...fromChat, ...fromLogs].filter((item) => item.text)
+  const merged = [...fromChat, ...fromLogs]
+    .filter((item) => item.text)
+    .sort((left, right) => left.timestamp - right.timestamp || (left.source === 'chat' ? -1 : 1))
   const unique = merged.filter((item, index, rows) => (
-    rows.findIndex((row) => `${row.time}|${row.tag}|${row.text}` === `${item.time}|${item.tag}|${item.text}`) === index
+    rows.findIndex((row) => `${row.time}|${row.text}` === `${item.time}|${item.text}`) === index
   ))
-  return unique.length ? unique.slice(-14) : (language === 'zh' ? FALLBACK_LOGS_ZH : FALLBACK_LOGS_EN)
+  return unique.length ? unique.slice(-16) : (language === 'zh' ? FALLBACK_LOGS_ZH : FALLBACK_LOGS_EN)
 }
 
 function LanguageToggle({ language, onChange }) {

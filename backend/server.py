@@ -1737,6 +1737,62 @@ def _get_skill_catalog(robot_id: str = None) -> dict:
     }
 
 
+def _build_skill_inventory_reply(message: str):
+    """Return an exact live-registry answer for skill-count questions."""
+    text = str(message or "").strip()
+    lowered = text.lower()
+    mentions_skills = "技能" in text or "skill" in lowered
+    asks_for_count = any(token in lowered for token in (
+        "多少", "几个", "数量", "总数", "how many", "count", "number of",
+    ))
+    if not (mentions_skills and asks_for_count):
+        return None
+
+    catalog = _get_skill_catalog()
+    if not isinstance(catalog, dict) or not catalog:
+        return "当前还没有机器人技能注册表。" if "技能" in text else "No robot skill registry is currently available."
+
+    per_robot = {
+        str(robot_id): len(skills) if isinstance(skills, list) else 0
+        for robot_id, skills in catalog.items()
+    }
+    unique_names = {
+        str(skill.get("name"))
+        for skills in catalog.values() if isinstance(skills, list)
+        for skill in skills if isinstance(skill, dict) and skill.get("name")
+    }
+    robot_count = len(per_robot)
+    total_instances = sum(per_robot.values())
+    current_robot = state.current_robot if state.current_robot in per_robot else next(iter(per_robot))
+    current_count = per_robot[current_robot]
+    counts_are_equal = len(set(per_robot.values())) == 1
+
+    if "技能" in text:
+        if counts_are_equal:
+            return (
+                f"当前 {current_robot} 注册了 {current_count} 个可用技能。"
+                f"系统共有 {robot_count} 架已注册无人机，每架技能目录一致；"
+                f"按技能名称去重为 {len(unique_names)} 个，机器人-技能实例总数为 {total_instances} 个。"
+            )
+        details = "，".join(f"{robot_id}: {count}" for robot_id, count in per_robot.items())
+        return (
+            f"当前各无人机注册技能数量为：{details}。"
+            f"按技能名称去重为 {len(unique_names)} 个，机器人-技能实例总数为 {total_instances} 个。"
+        )
+
+    if counts_are_equal:
+        return (
+            f"{current_robot} currently has {current_count} registered skills. "
+            f"All {robot_count} registered UAVs share the same catalog: {len(unique_names)} unique skill names "
+            f"and {total_instances} robot-skill instances in total."
+        )
+    details = ", ".join(f"{robot_id}: {count}" for robot_id, count in per_robot.items())
+    return (
+        f"Registered skill counts are {details}. There are {len(unique_names)} unique skill names "
+        f"and {total_instances} robot-skill instances in total."
+    )
+
+
 def _get_system_status() -> dict:
     executing_robots = state.executing_robot_snapshot()
     return {
@@ -3423,6 +3479,18 @@ def on_ai_task(data):
         emit("ai_plan_result", {"ok": False, "error": "系统未初始化"})
         return
 
+    task = str(data.get("task") or "").strip()
+    inventory_reply = _build_skill_inventory_reply(task)
+    if inventory_reply:
+        emit("ai_chat_reply", {
+            "ok": True,
+            "intent": "CHAT",
+            "reply": inventory_reply,
+            "message": task,
+            "source": "live_skill_catalog",
+        })
+        return
+
     if state.mode != "ai":
         emit("ai_plan_result", {"ok": False, "error": "请先切换到 AI 模式"})
         return
@@ -3646,6 +3714,22 @@ def on_ai_chat(data):
             "intent": "ANSWER",
             "reply": f"Answer received: {message[:80]}",
             "message": message,
+        })
+        return
+
+    inventory_reply = _build_skill_inventory_reply(message)
+    if inventory_reply:
+        history = _chat_histories.setdefault(sid, [])
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": inventory_reply})
+        if len(history) > 40:
+            _chat_histories[sid] = history[-40:]
+        emit("ai_chat_reply", {
+            "ok": True,
+            "intent": "CHAT",
+            "reply": inventory_reply,
+            "message": message,
+            "source": "live_skill_catalog",
         })
         return
 

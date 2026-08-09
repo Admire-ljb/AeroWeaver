@@ -47,3 +47,25 @@ def test_root_route_never_falls_back_to_legacy_dashboard(tmp_path, monkeypatch):
     assert response.status_code == 503
     assert b"AeroWeaver frontend is not built" in response.data
     assert b"BodySense" not in response.data
+
+
+def test_skill_inventory_query_uses_live_registry(monkeypatch):
+    server = importlib.import_module("server")
+    monkeypatch.setattr(server.state, "current_robot", "UAV_1")
+    monkeypatch.setattr(server, "_get_skill_catalog", lambda robot_id=None: {
+        "UAV_1": [{"name": "takeoff"}, {"name": "land"}, {"name": "hover"}],
+        "UAV_2": [{"name": "takeoff"}, {"name": "land"}, {"name": "hover"}],
+    })
+
+    reply = server._build_skill_inventory_reply("现在有多少注册的技能")
+
+    assert "UAV_1 注册了 3 个" in reply
+    assert "2 架已注册无人机" in reply
+    assert "去重为 3 个" in reply
+    assert "实例总数为 6 个" in reply
+
+
+def test_non_inventory_message_is_not_intercepted():
+    server = importlib.import_module("server")
+
+    assert server._build_skill_inventory_reply("让 UAV_1 起飞") is None

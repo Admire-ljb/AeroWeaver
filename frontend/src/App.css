@@ -2126,6 +2126,11 @@ button.status-card {
   color: #5ea6ff;
 }
 
+.dialogue-row.assistant .log-tag,
+.dialogue-row.assistant .log-text {
+  color: #77d9ff;
+}
+
 .dialogue-row.exec .log-tag {
   color: #79d13c;
 }
