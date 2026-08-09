@@ -198,16 +198,16 @@ export function useSocket() {
   const closeCockpit = useCallback(() => setCockpitOpen(false), [])
 
   // AI chat.
-  const sendChat = useCallback((message) => {
+  const sendChat = useCallback((message, interactionMode = 'auto', displayMessage = message) => {
     if (socketRef.current) {
       const now = Date.now()
-      // Add the user message to history immediately.
-      setChatHistory(prev => [...prev, { role: 'user', content: message, ts: now }])
+      // Keep machine-readable area context out of the operator-facing transcript.
+      setChatHistory(prev => [...prev, { role: 'user', content: displayMessage, mode: interactionMode, ts: now }])
       setLogs(prev => {
-        const next = [...prev, { ts: now, level: 'user', msg: message }]
+        const next = [...prev, { ts: now, level: 'user', msg: displayMessage }]
         return next.length > 300 ? next.slice(-300) : next
       })
-      socketRef.current.emit('ai_chat', { message })
+      socketRef.current.emit('ai_chat', { message, mode: interactionMode })
     }
   }, [])
   // Get raw socket reference for cockpit.

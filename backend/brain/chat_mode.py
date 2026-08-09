@@ -303,6 +303,7 @@ def unified_chat(
     perception_summary="",
     world_state_str="",
     camera_description="",
+    conversation_only=False,
 ):
     """
     统一对话接口: LLM 自己决定是回答还是规划。
@@ -317,6 +318,13 @@ def unified_chat(
         world_state_str=world_state_str,
         camera_description=camera_description,
     )
+    if conversation_only:
+        system_prompt += (
+            "\n\n---\n\n## CONVERSATION-ONLY MODE\n"
+            "Answer the operator naturally and helpfully, but do not output a JSON plan, "
+            "invoke a skill, claim that an action is underway, or change any UAV state. "
+            "If the operator asks for a physical action, discuss it without executing it."
+        )
 
     messages = [{"role": "system", "content": system_prompt}]
     for msg in chat_history[-20:]:
@@ -325,6 +333,35 @@ def unified_chat(
 
     try:
         raw = llm_client.chat(messages, temperature=0.7, max_tokens=1200)
+        if conversation_only:
+            raw_text = (raw or "").strip()
+            candidate_plan = _extract_plan(raw_text) or []
+            if not candidate_plan:
+                fallback = _fallback_single_action_plan(user_input)
+                candidate_plan = fallback.get("plan", []) if fallback else []
+            is_chinese = bool(re.search(r'[\u4e00-\u9fff]', user_input or ''))
+            if candidate_plan:
+                skills = ", ".join(dict.fromkeys(
+                    str(step.get("skill") or "unknown") for step in candidate_plan
+                ))
+                if is_chinese:
+                    text = (
+                        f"我识别到这是一个可能改变无人机状态的操作请求，候选技能为 {skills}。"
+                        "当前处于纯对话模式，因此没有执行；可以继续讨论参数、安全条件和预期结果。"
+                    )
+                else:
+                    text = (
+                        f"I recognized an operation request that could change UAV state; candidate skills: {skills}. "
+                        "Conversation-only mode did not execute it. We can discuss parameters, safety constraints, and expected results."
+                    )
+            else:
+                text = re.sub(r'```json\s*\{[\s\S]*?\}\s*```', '', raw_text).strip()
+                text = re.sub(r'\{[\s\S]*"plan"\s*:\s*\[[\s\S]*?\][\s\S]*?\}', '', text).strip()
+                if not text:
+                    text = "当前为对话模式，我不会执行无人机动作。"
+            marker = "仅对话，未执行任何无人机动作。" if is_chinese else "Conversation only. No UAV action was executed."
+            return {"type": "chat", "text": f"{marker}\n\n{text}", "plan": None}
+
         result = parse_response(raw)
 
         # 幻觉检测: 如果回复描述了物理动作但没有 plan, 追问一轮
@@ -370,6 +407,8 @@ def unified_chat(
             logger.exception("unified_chat 失败: %s", detail)
         else:
             logger.exception("unified_chat 失败")
+        if conversation_only:
+            return {"type": "chat", "text": safe_msg, "plan": None}
         fallback = _fallback_single_action_plan(user_input)
         if fallback:
             fallback["text"] += "（LLM 通道暂不可用，已使用本地单动作兜底。）"

@@ -2434,7 +2434,7 @@ function DeviceWorkspace({ language, connected }) {
 function TaskComposer({ language, disabled, onSubmit, taskArea, onClearTaskArea }) {
   const t = makeTranslator(language)
   const [value, setValue] = useState('')
-  const [mode, setMode] = useState('task')
+  const [mode, setMode] = useState('auto')
 
   const submit = () => {
     const text = value.trim()
@@ -2446,16 +2446,17 @@ function TaskComposer({ language, disabled, onSubmit, taskArea, onClearTaskArea 
   return (
     <section className="task-composer">
       <div className="composer-head">
-        <h2>{t('任务输入', 'Mission Input')}</h2>
+        <h2>{t('消息输入', 'Operator Input')}</h2>
         <div className="composer-actions">
-          {taskArea && mode === 'task' && (
+          {taskArea && mode !== 'chat' && (
             <div className="task-area-chip" title={taskAreaPrompt(taskArea, language)}>
               <span>{taskAreaSummary(taskArea, language)}</span>
               <button type="button" onClick={onClearTaskArea} aria-label={t('清除任务区域', 'Clear task area')}>×</button>
             </div>
           )}
           <div className="composer-mode">
-            <button className={mode === 'task' ? 'active' : ''} onClick={() => setMode('task')}>{t('任务', 'Mission')}</button>
+            <button className={mode === 'auto' ? 'active' : ''} onClick={() => setMode('auto')}>{t('智能', 'Auto')}</button>
+            <button className={mode === 'mission' ? 'active' : ''} onClick={() => setMode('mission')}>{t('执行', 'Execute')}</button>
             <button className={mode === 'chat' ? 'active' : ''} onClick={() => setMode('chat')}>{t('对话', 'Chat')}</button>
           </div>
         </div>
@@ -2471,11 +2472,15 @@ function TaskComposer({ language, disabled, onSubmit, taskArea, onClearTaskArea 
             submit()
           }}
           enterKeyHint="send"
-          placeholder={mode === 'chat' ? t('输入对话消息...', 'Type a message...') : t('输入任务指令...', 'Type a mission command...')}
+          placeholder={mode === 'chat'
+            ? t('输入对话消息...', 'Type a conversation message...')
+            : mode === 'mission'
+              ? t('输入需要立即执行的任务...', 'Enter a mission to execute...')
+              : t('输入问题或任务...', 'Ask a question or assign a mission...')}
           disabled={disabled}
         />
         <button onClick={submit} disabled={disabled || !value.trim()}>
-          {disabled ? t('执行中', 'Running') : mode === 'chat' ? t('对话', 'Chat') : t('发送', 'Send')}
+          {disabled ? t('不可用', 'Unavailable') : t('发送', 'Send')}
         </button>
       </div>
     </section>
@@ -2652,19 +2657,22 @@ export default function App() {
     }
   }, [selectedUavId, uavs])
 
-  const submitMission = (text, inputMode = 'task') => {
+  const submitMission = (text, inputMode = 'auto') => {
     setRightPanelView('log')
-    if (inputMode === 'chat') {
-      sendChat(text)
-      return
-    }
-    const areaContext = taskAreaPrompt(selectedTaskArea, language)
-    const missionText = areaContext ? `${text}
+    const areaContext = inputMode !== 'chat' ? taskAreaPrompt(selectedTaskArea, language) : ''
+    const preparedText = areaContext ? `${text}
 
 ${areaContext}` : text
-    setMissionPrompt(missionText)
-    if (systemStatus.mode !== 'ai') setMode('ai')
-    submitAiTask(missionText, true)
+
+    if (inputMode === 'mission') {
+      setMissionPrompt(preparedText)
+      if (systemStatus.mode !== 'ai') setMode('ai')
+      submitAiTask(preparedText, true)
+      return
+    }
+
+    if (inputMode === 'auto' && systemStatus.mode !== 'ai') setMode('ai')
+    sendChat(preparedText, inputMode, text)
   }
 
   const activateUav = (uav, openMenu = false) => {
@@ -3025,7 +3033,7 @@ ${areaContext}` : text
           />
           <TaskComposer
             language={language}
-            disabled={Boolean(systemStatus.ai_executing)}
+            disabled={!connected || !systemStatus.initialized}
             onSubmit={submitMission}
             taskArea={selectedTaskArea}
             onClearTaskArea={() => setSelectedTaskArea(null)}

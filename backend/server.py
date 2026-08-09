@@ -3628,6 +3628,9 @@ def on_ai_chat(data):
     if not message:
         emit("ai_chat_reply", {"ok": False, "error": "消息不能为空"})
         return
+    interaction_mode = str(data.get("mode") or "auto").strip().lower()
+    if interaction_mode not in {"auto", "chat"}:
+        interaction_mode = "auto"
 
     sid = request.sid
     from skills.cognitive_skills import AskUser
@@ -3706,6 +3709,7 @@ def on_ai_chat(data):
             perception_summary=perception_summary,
             world_state_str=world_state_str,
             camera_description=camera_description,
+            conversation_only=interaction_mode == "chat",
         )
 
         # 更新历史
@@ -3714,7 +3718,7 @@ def on_ai_chat(data):
         if len(history) > 40:
             _chat_histories[sid] = history[-40:]
 
-        if result["type"] == "plan" and result["plan"] and state.mode == "ai":
+        if result["type"] == "plan" and result["plan"] and interaction_mode != "chat" and state.mode == "ai":
             # LLM 决定执行任务。若是本地单动作兜底计划，直接执行该
             # plan，避免再进入依赖 LLM 的 AgentLoop 后因模型通道失败卡住。
             socketio.emit("ai_chat_reply", {
