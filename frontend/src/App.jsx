@@ -284,6 +284,52 @@ function worldToMapPercent(n = 0, e = 0) {
   }
 }
 
+function taskAreaFromMapPoints(start, end) {
+  const x = Math.min(start.xPct, end.xPct)
+  const y = Math.min(start.yPct, end.yPct)
+  const width = Math.abs(end.xPct - start.xPct)
+  const height = Math.abs(end.yPct - start.yPct)
+  const first = mapPercentToWorld(x, y)
+  const second = mapPercentToWorld(x + width, y + height)
+  const northMin = Math.min(first.n, second.n)
+  const northMax = Math.max(first.n, second.n)
+  const eastMin = Math.min(first.e, second.e)
+  const eastMax = Math.max(first.e, second.e)
+
+  return {
+    x,
+    y,
+    width,
+    height,
+    northMin,
+    northMax,
+    eastMin,
+    eastMax,
+    centerNorth: Number(((northMin + northMax) / 2).toFixed(1)),
+    centerEast: Number(((eastMin + eastMax) / 2).toFixed(1)),
+    widthMeters: Number((eastMax - eastMin).toFixed(1)),
+    heightMeters: Number((northMax - northMin).toFixed(1)),
+  }
+}
+
+function taskAreaSummary(area, language) {
+  if (!area) return ''
+  const size = `${area.widthMeters.toFixed(0)} x ${area.heightMeters.toFixed(0)} m`
+  return textFor(language, `任务区域 ${size}`, `Task area ${size}`)
+}
+
+function taskAreaPrompt(area, language) {
+  if (!area) return ''
+  const bounds = `N=[${area.northMin.toFixed(1)}, ${area.northMax.toFixed(1)}] m; E=[${area.eastMin.toFixed(1)}, ${area.eastMax.toFixed(1)}] m`
+  const center = `[${area.centerNorth.toFixed(1)}, ${area.centerEast.toFixed(1)}]`
+  const size = `${area.widthMeters.toFixed(1)} x ${area.heightMeters.toFixed(1)} m`
+  return textFor(
+    language,
+    `地图框选任务区域：${bounds}；中心 N/E=${center}；尺寸 E x N=${size}。所有搜索、巡检和编队动作应限制在此边界内。`,
+    `Map-selected mission area: ${bounds}; center N/E=${center}; size E x N=${size}. Keep all search, inspection, and formation actions within this boundary.`,
+  )
+}
+
 function registrationPositionForUav(uav, total = DEFAULT_UAV_COUNT) {
   const index = Math.max(uavNumber(uav?.id) - 1, 0)
   const pos = uav || fallbackUavPosition(index, total)
@@ -682,6 +728,7 @@ function MissionMap({
   mapTools,
   layerOptions,
   measurementPoints,
+  selectedTaskArea,
   desiredUavCount,
   fleetSync,
   onSelectUav,
@@ -695,6 +742,8 @@ function MissionMap({
   onApplyUavCount,
   onClearMeasurement,
   onMeasurePoint,
+  onSelectTaskArea,
+  onClearTaskArea,
   onClosePayloadMenu,
   onCloseFpv,
   onExpandFpv,
@@ -722,19 +771,154 @@ function MissionMap({
     )
     : null
 
+  const mapRef = useRef(null)
+  const dragRef = useRef(null)
+  const suppressClickRef = useRef(false)
+  const [viewport, setViewport] = useState({ scale: 1, x: 0, y: 0 })
+  const [areaDraft, setAreaDraft] = useState(null)
+  const [isPanning, setIsPanning] = useState(false)
+
+  const constrainViewport = useCallback((candidate, rect) => {
+    const scale = clamp(candidate.scale, 1, 3)
+    return {
+      scale,
+      x: clamp(candidate.x, rect.width * (1 - scale), 0),
+      y: clamp(candidate.y, rect.height * (1 - scale), 0),
+    }
+  }, [])
+
+  const screenToMapPoint = useCallback((clientX, clientY, activeViewport = viewport) => {
+    const rect = mapRef.current?.getBoundingClientRect()
+    if (!rect?.width || !rect?.height) return null
+    const xPct = clamp(((clientX - rect.left - activeViewport.x) / (rect.width * activeViewport.scale)) * 100, 0, 100)
+    const yPct = clamp(((clientY - rect.top - activeViewport.y) / (rect.height * activeViewport.scale)) * 100, 0, 100)
+    return { xPct, yPct, ...mapPercentToWorld(xPct, yPct) }
+  }, [viewport])
+
+  const displayTaskArea = useMemo(
+    () => areaDraft ? taskAreaFromMapPoints(areaDraft.start, areaDraft.current) : selectedTaskArea,
+    [areaDraft, selectedTaskArea],
+  )
+  const worldStyle = useMemo(
+    () => ({ transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})` }),
+    [viewport],
+  )
+
+  useEffect(() => {
+    const keepViewportInBounds = () => {
+      const rect = mapRef.current?.getBoundingClientRect()
+      if (!rect?.width || !rect?.height) return
+      setViewport((previous) => constrainViewport(previous, rect))
+    }
+    window.addEventListener('resize', keepViewportInBounds)
+    return () => window.removeEventListener('resize', keepViewportInBounds)
+  }, [constrainViewport])
+
+  const zoomMap = useCallback((factor, anchorClientX, anchorClientY) => {
+    const rect = mapRef.current?.getBoundingClientRect()
+    if (!rect?.width || !rect?.height) return
+    const anchorX = Number.isFinite(anchorClientX) ? anchorClientX - rect.left : rect.width / 2
+    const anchorY = Number.isFinite(anchorClientY) ? anchorClientY - rect.top : rect.height / 2
+    setViewport((previous) => {
+      const scale = clamp(previous.scale * factor, 1, 3)
+      const worldX = (anchorX - previous.x) / previous.scale
+      const worldY = (anchorY - previous.y) / previous.scale
+      return constrainViewport({
+        scale,
+        x: anchorX - worldX * scale,
+        y: anchorY - worldY * scale,
+      }, rect)
+    })
+  }, [constrainViewport])
+
+  const resetMapViewport = useCallback(() => {
+    setViewport({ scale: 1, x: 0, y: 0 })
+  }, [])
+
+  const handleWheel = (event) => {
+    if (event.target.closest('button, input, label, .map-popover, .uav-payload-menu, .fpv-window')) return
+    event.preventDefault()
+    zoomMap(event.deltaY < 0 ? 1.16 : 1 / 1.16, event.clientX, event.clientY)
+  }
+
+  const handlePointerDown = (event) => {
+    if (event.target.closest('button, input, label, .map-popover, .uav-payload-menu, .fpv-window')) return
+    if (event.button !== 0 && event.button !== 1) return
+
+    if (mapTools.area) {
+      const point = screenToMapPoint(event.clientX, event.clientY)
+      if (!point) return
+      event.preventDefault()
+      dragRef.current = { type: 'area', pointerId: event.pointerId, start: point }
+      setAreaDraft({ start: point, current: point })
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+      return
+    }
+
+    if (mapPickRequest || mapTools.measure || viewport.scale <= 1.001) return
+    event.preventDefault()
+    dragRef.current = {
+      type: 'pan',
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startViewport: viewport,
+      moved: false,
+    }
+    setIsPanning(true)
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const handlePointerMove = (event) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+
+    if (drag.type === 'area') {
+      const point = screenToMapPoint(event.clientX, event.clientY)
+      if (point) setAreaDraft({ start: drag.start, current: point })
+      return
+    }
+
+    const rect = mapRef.current?.getBoundingClientRect()
+    if (!rect?.width || !rect?.height) return
+    const dx = event.clientX - drag.startClientX
+    const dy = event.clientY - drag.startClientY
+    if (Math.hypot(dx, dy) > 3) drag.moved = true
+    setViewport(constrainViewport({
+      ...drag.startViewport,
+      x: drag.startViewport.x + dx,
+      y: drag.startViewport.y + dy,
+    }, rect))
+  }
+
+  const finishPointerInteraction = (event, cancelled = false) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+
+    if (drag.type === 'area') {
+      const end = screenToMapPoint(event.clientX, event.clientY)
+      const area = end ? taskAreaFromMapPoints(drag.start, end) : null
+      setAreaDraft(null)
+      if (!cancelled && area && area.width >= 1 && area.height >= 1) onSelectTaskArea(area)
+      suppressClickRef.current = true
+    } else if (drag.moved) {
+      suppressClickRef.current = true
+    }
+
+    dragRef.current = null
+    setIsPanning(false)
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+
   const handleMapClick = (event) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false
+      return
+    }
     if (event.target.closest('button, input, label, .map-popover, .uav-payload-menu, .fpv-window')) return
 
-    const rect = event.currentTarget.getBoundingClientRect()
-    const xPct = clamp(((event.clientX - rect.left) / rect.width) * 100, 0, 100)
-    const yPct = clamp(((event.clientY - rect.top) / rect.height) * 100, 0, 100)
-    const { n, e } = mapPercentToWorld(xPct, yPct)
-    const point = {
-      xPct,
-      yPct,
-      n,
-      e,
-    }
+    const point = screenToMapPoint(event.clientX, event.clientY)
+    if (!point) return
 
     if (mapPickRequest) {
       onMapPick(point)
@@ -746,9 +930,7 @@ function MissionMap({
       return
     }
 
-    if (showPayloadMenu) {
-      onClosePayloadMenu()
-    }
+    if (showPayloadMenu) onClosePayloadMenu()
   }
 
   return (
@@ -771,20 +953,32 @@ function MissionMap({
           <button className={skillPanelOpen ? 'active' : ''} onClick={() => onOpenSkillPanel(selectedUav || uavs[0])}>{t('可视化Skill', 'Visualize Skill')}</button>
           <button className={layerOptions.routes || tracksWorkspaceOpen ? 'active' : ''} onClick={onOpenTracks}>{t('航迹', 'Tracks')}</button>
           <button className={mapTools.measure ? 'active' : ''} onClick={() => onToggleMapTool('measure')}>{t('测距', 'Measure')}</button>
+          <button className={mapTools.area ? 'active' : ''} onClick={() => onToggleMapTool('area')} title={t('框选任务区域', 'Select mission area')}>{t('框选区域', 'Select Area')}</button>
           <button className={mapTools.layers ? 'active' : ''} onClick={() => onToggleMapTool('layers')}>{t('图层', 'Layers')}</button>
           <button className={mapTools.settings ? 'active' : ''} onClick={() => onToggleMapTool('settings')}>{t('设置', 'Settings')}</button>
         </div>
 
-        <div className={`city-map ${sceneMode ? 'scene-mode' : ''} ${mapPickRequest || mapTools.measure ? 'picking' : ''} ${!layerOptions.grid ? 'no-grid' : ''} ${!layerOptions.roads ? 'no-roads' : ''}`} onClick={handleMapClick}>
-          {sceneMode && (
-            <AirSimRelayScene
-              language={language}
-              sceneImage={sceneImage}
-              sceneImageUrl={sceneImageUrl}
-            />
-          )}
-          <div className="map-noise" />
-          {CITY_LINES.map((line) => <span key={line.className} className={line.className} />)}
+        <div
+          ref={mapRef}
+          className={`city-map ${sceneMode ? 'scene-mode' : ''} ${mapPickRequest || mapTools.measure || mapTools.area ? 'picking' : ''} ${viewport.scale > 1.001 && !mapPickRequest && !mapTools.measure && !mapTools.area ? 'can-pan' : ''} ${isPanning ? 'is-panning' : ''} ${!layerOptions.grid ? 'no-grid' : ''} ${!layerOptions.roads ? 'no-roads' : ''}`}
+          onClick={handleMapClick}
+          onWheel={handleWheel}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={(event) => finishPointerInteraction(event)}
+          onPointerCancel={(event) => finishPointerInteraction(event, true)}
+        >
+          <div className="map-world map-world-base" style={worldStyle}>
+            {sceneMode && (
+              <AirSimRelayScene
+                language={language}
+                sceneImage={sceneImage}
+                sceneImageUrl={sceneImageUrl}
+              />
+            )}
+            <div className="map-noise" />
+            {CITY_LINES.map((line) => <span key={line.className} className={line.className} />)}
+          </div>
 
           {mapPickRequest && (
             <div className="map-pick-hint">
@@ -797,6 +991,23 @@ function MissionMap({
             <div className="map-pick-hint measure">
               <span>{measurementPoints.length < 1 ? t('测距：点击起点', 'Measure: click start') : measurementPoints.length < 2 ? t('测距：点击终点', 'Measure: click end') : t(`距离 ${measuredDistance.toFixed(1)} m`, `Distance ${measuredDistance.toFixed(1)} m`)}</span>
               <button onClick={onClearMeasurement}>{t('清除', 'Clear')}</button>
+            </div>
+          )}
+
+          {mapTools.area && !mapPickRequest && (
+            <div className="map-pick-hint area">
+              <span>{t('拖动框选任务区域', 'Drag to select mission area')}</span>
+              <button onClick={() => {
+                setAreaDraft(null)
+                onToggleMapTool('area')
+              }}>{t('取消', 'Cancel')}</button>
+            </div>
+          )}
+
+          {selectedTaskArea && !mapTools.area && !mapPickRequest && (
+            <div className="map-area-status">
+              <span>{taskAreaSummary(selectedTaskArea, language)}</span>
+              <button type="button" onClick={onClearTaskArea} aria-label={t('清除任务区域', 'Clear task area')}>×</button>
             </div>
           )}
 
@@ -814,7 +1025,22 @@ function MissionMap({
             />
           )}
 
+          <div className="map-world map-world-objects" style={worldStyle}>
           <svg className="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            {displayTaskArea && (
+              <>
+                <rect
+                  className={`task-area-rect ${areaDraft ? 'draft' : ''}`}
+                  x={displayTaskArea.x}
+                  y={displayTaskArea.y}
+                  width={displayTaskArea.width}
+                  height={displayTaskArea.height}
+                />
+                <text className="task-area-label" x={displayTaskArea.x + 1.2} y={Math.max(displayTaskArea.y - 1.2, 3)}>
+                  {t('任务区域', 'TASK AREA')}
+                </text>
+              </>
+            )}
             {layerOptions.routes && trajectorySeries.map((series) => {
               const mapPoints = series.samples.map((sample) => ({
                 ...worldToMapPercent(sample.north_m, sample.east_m),
@@ -890,6 +1116,13 @@ function MissionMap({
               <span className="uav-dot" />
             </button>
           ))}
+          </div>
+
+          <div className="map-navigation" aria-label={t('地图视图控制', 'Map view controls')}>
+            <button type="button" onClick={() => zoomMap(1 / 1.25)} aria-label={t('缩小地图', 'Zoom out')} title={t('缩小', 'Zoom out')}>−</button>
+            <button type="button" className="map-zoom-level" onClick={resetMapViewport} title={t('重置地图视图', 'Reset map view')}>{Math.round(viewport.scale * 100)}%</button>
+            <button type="button" onClick={() => zoomMap(1.25)} aria-label={t('放大地图', 'Zoom in')} title={t('放大', 'Zoom in')}>+</button>
+          </div>
 
           <div className={`uav-legend ${layerOptions.labels ? '' : 'compact'}`}>
             {uavs.map((uav) => (
@@ -2198,7 +2431,7 @@ function DeviceWorkspace({ language, connected }) {
   )
 }
 
-function TaskComposer({ language, disabled, onSubmit }) {
+function TaskComposer({ language, disabled, onSubmit, taskArea, onClearTaskArea }) {
   const t = makeTranslator(language)
   const [value, setValue] = useState('')
   const [mode, setMode] = useState('task')
@@ -2214,9 +2447,17 @@ function TaskComposer({ language, disabled, onSubmit }) {
     <section className="task-composer">
       <div className="composer-head">
         <h2>{t('任务输入', 'Mission Input')}</h2>
-        <div className="composer-mode">
-          <button className={mode === 'task' ? 'active' : ''} onClick={() => setMode('task')}>{t('任务', 'Mission')}</button>
-          <button className={mode === 'chat' ? 'active' : ''} onClick={() => setMode('chat')}>{t('对话', 'Chat')}</button>
+        <div className="composer-actions">
+          {taskArea && mode === 'task' && (
+            <div className="task-area-chip" title={taskAreaPrompt(taskArea, language)}>
+              <span>{taskAreaSummary(taskArea, language)}</span>
+              <button type="button" onClick={onClearTaskArea} aria-label={t('清除任务区域', 'Clear task area')}>×</button>
+            </div>
+          )}
+          <div className="composer-mode">
+            <button className={mode === 'task' ? 'active' : ''} onClick={() => setMode('task')}>{t('任务', 'Mission')}</button>
+            <button className={mode === 'chat' ? 'active' : ''} onClick={() => setMode('chat')}>{t('对话', 'Chat')}</button>
+          </div>
         </div>
       </div>
       <div className="task-row">
@@ -2224,8 +2465,12 @@ function TaskComposer({ language, disabled, onSubmit }) {
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submit()
+            if (event.key !== 'Enter' || event.shiftKey) return
+            if (event.nativeEvent?.isComposing || event.keyCode === 229) return
+            event.preventDefault()
+            submit()
           }}
+          enterKeyHint="send"
           placeholder={mode === 'chat' ? t('输入对话消息...', 'Type a message...') : t('输入任务指令...', 'Type a mission command...')}
           disabled={disabled}
         />
@@ -2289,9 +2534,10 @@ export default function App() {
   const [rightPanelView, setRightPanelView] = useState('log')
   const [desiredUavCount, setDesiredUavCount] = useState(DEFAULT_UAV_COUNT)
   const [fleetSync, setFleetSync] = useState({ status: 'idle', message: '' })
-  const [mapTools, setMapTools] = useState({ measure: false, layers: false, settings: false })
+  const [mapTools, setMapTools] = useState({ measure: false, area: false, layers: false, settings: false })
   const [layerOptions, setLayerOptions] = useState({ grid: true, roads: true, routes: false, labels: true })
   const [measurementPoints, setMeasurementPoints] = useState([])
+  const [selectedTaskArea, setSelectedTaskArea] = useState(null)
   const [missionPrompt, setMissionPrompt] = useState('')
   const [mapPickRequest, setMapPickRequest] = useState(null)
   const [pickedMapPoint, setPickedMapPoint] = useState(null)
@@ -2412,9 +2658,13 @@ export default function App() {
       sendChat(text)
       return
     }
-    setMissionPrompt(text)
+    const areaContext = taskAreaPrompt(selectedTaskArea, language)
+    const missionText = areaContext ? `${text}
+
+${areaContext}` : text
+    setMissionPrompt(missionText)
     if (systemStatus.mode !== 'ai') setMode('ai')
-    submitAiTask(text, true)
+    submitAiTask(missionText, true)
   }
 
   const activateUav = (uav, openMenu = false) => {
@@ -2589,10 +2839,12 @@ export default function App() {
   const toggleMapTool = (tool) => {
     setMapTools((prev) => ({
       measure: tool === 'measure' ? !prev.measure : false,
+      area: tool === 'area' ? !prev.area : false,
       layers: tool === 'layers' ? !prev.layers : false,
       settings: tool === 'settings' ? !prev.settings : false,
     }))
     if (tool !== 'measure') setMeasurementPoints([])
+    if (tool === 'measure' || tool === 'area') setMapPickRequest(null)
   }
 
   const toggleLayer = (layer) => {
@@ -2647,6 +2899,7 @@ export default function App() {
           mapTools={mapTools}
           layerOptions={layerOptions}
           measurementPoints={measurementPoints}
+          selectedTaskArea={selectedTaskArea}
           desiredUavCount={desiredUavCount}
           fleetSync={fleetSync}
           onSelectUav={(uav) => activateUav(uav, true)}
@@ -2660,6 +2913,11 @@ export default function App() {
           onApplyUavCount={applyDesiredUavCount}
           onClearMeasurement={() => setMeasurementPoints([])}
           onMeasurePoint={addMeasurementPoint}
+          onSelectTaskArea={(area) => {
+            setSelectedTaskArea(area)
+            setMapTools((previous) => ({ ...previous, area: false }))
+          }}
+          onClearTaskArea={() => setSelectedTaskArea(null)}
           onClosePayloadMenu={() => setShowPayloadMenu(false)}
           onCloseFpv={() => {
             setShowFpv(false)
@@ -2747,6 +3005,7 @@ export default function App() {
               pickedMapPoint,
               onRequestMapPick: (request) => {
                 setSelectedUavId(skillUav?.id || null)
+                setMapTools((previous) => ({ ...previous, area: false, measure: false }))
                 setMapPickRequest({ ...request, id: Date.now() })
               },
             }}
@@ -2768,6 +3027,8 @@ export default function App() {
             language={language}
             disabled={Boolean(systemStatus.ai_executing)}
             onSubmit={submitMission}
+            taskArea={selectedTaskArea}
+            onClearTaskArea={() => setSelectedTaskArea(null)}
           />
         </aside>
       </main>

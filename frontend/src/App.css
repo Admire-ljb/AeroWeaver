@@ -2342,3 +2342,258 @@ button.status-card {
     grid-template-columns: 9px 62px 48px 58px minmax(48px, 1fr);
   }
 }
+
+
+/* Interactive map viewport */
+.city-map {
+  background: #061724;
+  touch-action: none;
+  user-select: none;
+}
+
+.city-map::before,
+.city-map::after {
+  display: none;
+}
+
+.map-world {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.map-world-base {
+  z-index: 0;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(28, 218, 229, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(28, 218, 229, 0.04) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(16, 128, 152, 0.22), rgba(2, 17, 31, 0.58)),
+    #061724;
+  background-size: 8px 8px, 8px 8px, auto, auto;
+}
+
+.map-world-base::before {
+  content: "";
+  position: absolute;
+  inset: -6%;
+  opacity: 0.62;
+  background:
+    repeating-linear-gradient(18deg, transparent 0 24px, rgba(16, 214, 224, 0.2) 25px 26px, transparent 27px 54px),
+    repeating-linear-gradient(93deg, transparent 0 36px, rgba(16, 214, 224, 0.16) 37px 39px, transparent 40px 76px);
+  transform: rotate(-5deg);
+}
+
+.map-world-base::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 62% 43%, transparent 0 34%, rgba(2, 10, 19, 0.34) 58%, rgba(2, 10, 19, 0.72) 100%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.24), transparent 23%, transparent 74%, rgba(0, 0, 0, 0.28));
+  pointer-events: none;
+}
+
+.map-world-objects {
+  z-index: 2;
+}
+
+.city-map.no-grid .map-world-base {
+  background:
+    linear-gradient(135deg, rgba(16, 128, 152, 0.22), rgba(2, 17, 31, 0.58)),
+    #061724;
+}
+
+.city-map.scene-mode .map-world-base {
+  background: #020812;
+}
+
+.city-map.scene-mode .map-world-base::before {
+  opacity: 0.04;
+}
+
+.city-map.scene-mode .map-world-base::after {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.18), transparent 24%, transparent 70%, rgba(0, 0, 0, 0.2));
+}
+
+.city-map.can-pan {
+  cursor: grab;
+}
+
+.city-map.is-panning {
+  cursor: grabbing;
+}
+
+.city-map.picking {
+  cursor: crosshair;
+}
+
+.map-navigation {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 12;
+  display: grid;
+  grid-template-columns: 32px 58px 32px;
+  height: 30px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(150, 205, 235, 0.5);
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(4, 20, 34, 0.9);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+}
+
+.map-navigation button {
+  min-width: 0;
+  border: 0;
+  border-right: 1px solid rgba(150, 205, 235, 0.24);
+  border-radius: 0;
+  color: #e8f8ff;
+  background: transparent;
+  font-size: 18px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.map-navigation button:last-child {
+  border-right: 0;
+}
+
+.map-navigation button:hover {
+  color: #061927;
+  background: #f2ac23;
+}
+
+.map-navigation .map-zoom-level {
+  font-size: 11px;
+}
+
+.map-pick-hint.area {
+  border-color: rgba(242, 172, 35, 0.78);
+  color: #fff4cf;
+}
+
+.map-area-status {
+  position: absolute;
+  left: 50%;
+  bottom: 56px;
+  z-index: 12;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  padding-left: 10px;
+  border: 1px solid rgba(242, 172, 35, 0.62);
+  border-radius: 4px;
+  color: #fff1bd;
+  background: rgba(38, 31, 16, 0.9);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.map-area-status button {
+  width: 28px;
+  height: 26px;
+  border: 0;
+  border-left: 1px solid rgba(242, 172, 35, 0.36);
+  color: #fff1bd;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.map-area-status button:hover {
+  color: #071926;
+  background: #f2ac23;
+}
+
+.route-layer .task-area-rect {
+  fill: rgba(242, 172, 35, 0.13);
+  stroke: #ffc44d;
+  stroke-width: 2;
+  stroke-dasharray: 8 5;
+  vector-effect: non-scaling-stroke;
+}
+
+.route-layer .task-area-rect.draft {
+  fill: rgba(0, 212, 255, 0.14);
+  stroke: #00d4ff;
+}
+
+.route-layer .task-area-label {
+  fill: #fff5d5;
+  stroke: rgba(3, 12, 20, 0.96);
+  stroke-width: 0.45;
+  paint-order: stroke;
+  font-size: 2.5px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.composer-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.task-area-chip {
+  min-width: 0;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 9px;
+  border: 1px solid rgba(242, 172, 35, 0.58);
+  border-radius: 4px;
+  color: #fff1bd;
+  background: rgba(81, 56, 10, 0.42);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.task-area-chip button {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-left: 1px solid rgba(242, 172, 35, 0.36);
+  border-radius: 0;
+  color: #fff1bd;
+  background: transparent;
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.task-area-chip button:hover {
+  color: #071926;
+  background: #f2ac23;
+}
+
+@media (max-width: 920px) {
+  .composer-head {
+    align-items: flex-start;
+  }
+
+  .composer-actions {
+    align-items: flex-end;
+    flex-direction: column-reverse;
+  }
+
+  .task-area-chip {
+    height: 26px;
+  }
+
+  .task-area-chip button {
+    height: 24px;
+  }
+}
