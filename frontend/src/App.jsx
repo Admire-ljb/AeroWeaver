@@ -213,6 +213,8 @@ const SAMPLE_UAVS = [
 
 const DEFAULT_UAV_COUNT = 4
 const MAP_WORLD_SCALE = 2 // meters per percent point on the 0-100 map canvas
+const MAP_MIN_VIEW_SCALE = 0.25
+const MAP_MAX_VIEW_SCALE = 4
 
 const SENSOR_DEFS = [
   { key: 'front', labelEn: 'Sensor - Visible Light - Front', labelZh: '传感器-可见光-前视', shortEn: 'Front', shortZh: '前视', type: 'camera' },
@@ -256,6 +258,19 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
+function niceScaleDistance(targetMeters) {
+  if (!Number.isFinite(targetMeters) || targetMeters <= 0) return 50
+  const magnitude = 10 ** Math.floor(Math.log10(targetMeters))
+  const normalized = targetMeters / magnitude
+  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
+  return multiplier * magnitude
+}
+
+function formatScaleDistance(meters) {
+  if (meters >= 1000) return `${Number((meters / 1000).toFixed(1))} km`
+  return `${Number(meters.toFixed(meters < 1 ? 1 : 0))} m`
+}
+
 function normalizeUavId(id) {
   const match = String(id || '').match(/UAV[-_\s]*(\d+)/i)
   return match ? `UAV-${Number(match[1])}` : String(id || '').replaceAll('_', '-').toUpperCase()
@@ -280,8 +295,8 @@ function mapPercentToWorld(xPct, yPct) {
 
 function worldToMapPercent(n = 0, e = 0) {
   return {
-    x: clamp(50 + Number(e || 0) / MAP_WORLD_SCALE, 0, 100),
-    y: clamp(50 - Number(n || 0) / MAP_WORLD_SCALE, 0, 100),
+    x: 50 + Number(e || 0) / MAP_WORLD_SCALE,
+    y: 50 - Number(n || 0) / MAP_WORLD_SCALE,
   }
 }
 
@@ -786,23 +801,21 @@ function MissionMap({
   const dragRef = useRef(null)
   const suppressClickRef = useRef(false)
   const [viewport, setViewport] = useState({ scale: 1, x: 0, y: 0 })
+  const [mapSize, setMapSize] = useState({ width: 0, height: 0 })
   const [areaDraft, setAreaDraft] = useState(null)
   const [isPanning, setIsPanning] = useState(false)
 
-  const constrainViewport = useCallback((candidate, rect) => {
-    const scale = clamp(candidate.scale, 1, 3)
-    return {
-      scale,
-      x: clamp(candidate.x, rect.width * (1 - scale), 0),
-      y: clamp(candidate.y, rect.height * (1 - scale), 0),
-    }
-  }, [])
+  const constrainViewport = useCallback((candidate) => ({
+    scale: clamp(candidate.scale, MAP_MIN_VIEW_SCALE, MAP_MAX_VIEW_SCALE),
+    x: Number.isFinite(candidate.x) ? candidate.x : 0,
+    y: Number.isFinite(candidate.y) ? candidate.y : 0,
+  }), [])
 
   const screenToMapPoint = useCallback((clientX, clientY, activeViewport = viewport) => {
     const rect = mapRef.current?.getBoundingClientRect()
     if (!rect?.width || !rect?.height) return null
-    const xPct = clamp(((clientX - rect.left - activeViewport.x) / (rect.width * activeViewport.scale)) * 100, 0, 100)
-    const yPct = clamp(((clientY - rect.top - activeViewport.y) / (rect.height * activeViewport.scale)) * 100, 0, 100)
+    const xPct = ((clientX - rect.left - activeViewport.x) / (rect.width * activeViewport.scale)) * 100
+    const yPct = ((clientY - rect.top - activeViewport.y) / (rect.height * activeViewport.scale)) * 100
     return { xPct, yPct, ...mapPercentToWorld(xPct, yPct) }
   }, [viewport])
 
@@ -816,14 +829,22 @@ function MissionMap({
   )
 
   useEffect(() => {
-    const keepViewportInBounds = () => {
-      const rect = mapRef.current?.getBoundingClientRect()
-      if (!rect?.width || !rect?.height) return
-      setViewport((previous) => constrainViewport(previous, rect))
+    const mapNode = mapRef.current
+    if (!mapNode) return undefined
+
+    const updateMapSize = () => {
+      const rect = mapNode.getBoundingClientRect()
+      if (rect.width && rect.height) setMapSize({ width: rect.width, height: rect.height })
     }
-    window.addEventListener('resize', keepViewportInBounds)
-    return () => window.removeEventListener('resize', keepViewportInBounds)
-  }, [constrainViewport])
+    updateMapSize()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateMapSize)
+    observer?.observe(mapNode)
+    window.addEventListener('resize', updateMapSize)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', updateMapSize)
+    }
+  }, [])
 
   const zoomMap = useCallback((factor, anchorClientX, anchorClientY) => {
     const rect = mapRef.current?.getBoundingClientRect()
@@ -831,7 +852,7 @@ function MissionMap({
     const anchorX = Number.isFinite(anchorClientX) ? anchorClientX - rect.left : rect.width / 2
     const anchorY = Number.isFinite(anchorClientY) ? anchorClientY - rect.top : rect.height / 2
     setViewport((previous) => {
-      const scale = clamp(previous.scale * factor, 1, 3)
+      const scale = clamp(previous.scale * factor, MAP_MIN_VIEW_SCALE, MAP_MAX_VIEW_SCALE)
       const worldX = (anchorX - previous.x) / previous.scale
       const worldY = (anchorY - previous.y) / previous.scale
       return constrainViewport({
@@ -841,6 +862,12 @@ function MissionMap({
       }, rect)
     })
   }, [constrainViewport])
+
+  const scaleBar = useMemo(() => {
+    const pixelsPerMeter = mapSize.width * viewport.scale / (100 * MAP_WORLD_SCALE)
+    const meters = niceScaleDistance(96 / Math.max(pixelsPerMeter, 0.001))
+    return { meters, pixels: meters * pixelsPerMeter }
+  }, [mapSize.width, viewport.scale])
 
   const resetMapViewport = useCallback(() => {
     setViewport({ scale: 1, x: 0, y: 0 })
@@ -866,7 +893,7 @@ function MissionMap({
       return
     }
 
-    if (mapPickRequest || mapTools.measure || viewport.scale <= 1.001) return
+    if (mapPickRequest || mapTools.measure) return
     event.preventDefault()
     dragRef.current = {
       type: 'pan',
@@ -971,7 +998,7 @@ function MissionMap({
 
         <div
           ref={mapRef}
-          className={`city-map ${sceneMode ? 'scene-mode' : ''} ${mapPickRequest || mapTools.measure || mapTools.area ? 'picking' : ''} ${viewport.scale > 1.001 && !mapPickRequest && !mapTools.measure && !mapTools.area ? 'can-pan' : ''} ${isPanning ? 'is-panning' : ''} ${!layerOptions.grid ? 'no-grid' : ''} ${!layerOptions.roads ? 'no-roads' : ''}`}
+          className={`city-map ${sceneMode ? 'scene-mode' : ''} ${mapPickRequest || mapTools.measure || mapTools.area ? 'picking' : ''} ${!mapPickRequest && !mapTools.measure && !mapTools.area ? 'can-pan' : ''} ${isPanning ? 'is-panning' : ''} ${!layerOptions.grid ? 'no-grid' : ''} ${!layerOptions.roads ? 'no-roads' : ''}`}
           onClick={handleMapClick}
           onWheel={handleWheel}
           onPointerDown={handlePointerDown}
@@ -980,6 +1007,7 @@ function MissionMap({
           onPointerCancel={(event) => finishPointerInteraction(event, true)}
         >
           <div className="map-world map-world-base" style={worldStyle}>
+            <div className="map-extent-grid" aria-hidden="true" />
             {sceneMode && (
               <AirSimRelayScene
                 language={language}
@@ -1038,6 +1066,14 @@ function MissionMap({
 
           <div className="map-world map-world-objects" style={worldStyle}>
           <svg className="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <g className="map-origin-marker">
+              <line x1="50" y1="55" x2="50" y2="44" />
+              <line x1="45" y1="50" x2="56" y2="50" />
+              <circle cx="50" cy="50" r="0.8" />
+              <text className="origin-north" x="50.8" y="44.8">N+</text>
+              <text className="origin-east" x="56.2" y="49.2">E+</text>
+              <text className="origin-label" x="51.2" y="53.2">{t('\u539f\u70b9 (0,0)', 'Origin (0,0)')}</text>
+            </g>
             {displayTaskArea && (
               <>
                 <rect
@@ -1127,6 +1163,12 @@ function MissionMap({
               <span className="uav-dot" />
             </button>
           ))}
+          </div>
+
+          <div className="map-scale-indicator" aria-label={t(`比例尺 ${formatScaleDistance(scaleBar.meters)}`, `Map scale ${formatScaleDistance(scaleBar.meters)}`)}>
+            <span className="map-scale-directions">N+ / E+</span>
+            <span className="map-scale-rule" style={{ width: `${scaleBar.pixels}px` }} />
+            <strong>{formatScaleDistance(scaleBar.meters)}</strong>
           </div>
 
           <div className="map-navigation" aria-label={t('地图视图控制', 'Map view controls')}>
