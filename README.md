@@ -136,6 +136,8 @@ python backend/server.py
 
 Open [http://127.0.0.1:5001](http://127.0.0.1:5001).
 
+Mock vehicles use a three-axis point-mass model inspired by MPE: physical damping, bounded acceleration, speed limiting, and fixed-step position integration. Flight skills therefore produce continuous trajectories instead of teleporting. Set `AEROWEAVER_MOCK_REALTIME_FACTOR` to control simulated time relative to wall-clock time (default: `2.0`).
+
 ## AirSim
 
 Set AirSim to listen on an address reachable by the AeroWeaver backend. The

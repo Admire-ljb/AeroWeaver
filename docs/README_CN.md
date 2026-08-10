@@ -64,6 +64,8 @@ cd ..
 SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python backend/server.py
 ```
 
+Mock 无人机使用受 MPE 启发的三轴点质量运动学模型，包含物理阻尼、加速度限制、速度上限和固定时间步位置积分，因此飞行技能会生成连续轨迹而不是瞬移。可通过 `AEROWEAVER_MOCK_REALTIME_FACTOR` 调整仿真时间相对于实际时间的倍率，默认值为 `2.0`。
+
 浏览器打开 [http://127.0.0.1:5001](http://127.0.0.1:5001)。
 
 ## 接入 AirSim

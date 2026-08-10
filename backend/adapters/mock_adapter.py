@@ -1,76 +1,275 @@
-"""
-mock_adapter.py
-Mock 仿真适配器 —— 纯内存模拟，不依赖任何外部仿真环境。
-用于单元测试、离线开发、CI/CD。
-"""
+"""In-memory multi-UAV simulator with deterministic point-mass dynamics."""
 
-import time
+from __future__ import annotations
+
 import logging
+import math
+import os
 import threading
-from adapters.sim_adapter import SimAdapter, Position, GPSPosition, VehicleState, ActionResult
+import time
+
+from adapters.mock_dynamics import PointMassDynamics
+from adapters.sim_adapter import ActionResult, GPSPosition, Position, SimAdapter, VehicleState
+
 
 logger = logging.getLogger(__name__)
 
 
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, float(value)))
+
+
+def _speed(values) -> float:
+    items = [float(value) for value in list(values)[:3]]
+    return math.sqrt(sum(value * value for value in items))
+
+
 class MockAdapter(SimAdapter):
-    """Mock 仿真适配器，所有操作纯内存模拟。"""
+    """A lightweight 3D simulator for UI, agent and CI workflows.
+
+    Normal flight commands submit targets to a background physics loop.  The
+    explicit ``set_robot_position`` method remains available for scenario reset
+    and scripted mission playback, where teleporting is intentional.
+    """
 
     name = "mock"
-    description = "Mock adapter (in-memory simulation, no external dependencies)"
+    description = "Mock adapter (MPE-style 3D point-mass dynamics)"
     supported_vehicles = ["multirotor", "fixedwing", "rover"]
 
-    def __init__(self):
+    def __init__(self, *, realtime_factor=None, dynamics=None):
         self._state_lock = threading.RLock()
+        self._physics_condition = threading.Condition(self._state_lock)
+        self._physics_stop = threading.Event()
+        self._physics_thread = None
+        self._dynamics = dynamics or PointMassDynamics()
+        configured_factor = (
+            realtime_factor
+            if realtime_factor is not None
+            else os.getenv("AEROWEAVER_MOCK_REALTIME_FACTOR", "2.0")
+        )
+        try:
+            configured_factor = float(configured_factor)
+        except (TypeError, ValueError):
+            configured_factor = 2.0
+        self._realtime_factor = _clamp(configured_factor, 0.1, 20.0)
         self._connected = False
+        self._active_robot = "UAV_1"
+        self._robot_states = {self._active_robot: self._default_robot_state()}
+        self._position = Position(0.0, 0.0, 0.0)
+        self._velocity_body = [0.0, 0.0, 0.0, 0.0]
         self._armed = False
         self._in_air = False
-        self._position = Position(0, 0, 0)
-        self._velocity_body = [0.0, 0.0, 0.0, 0.0]
         self._battery = (12.6, 1.0)
-        self._active_robot = "UAV_1"
-        self._robot_states = {}
-        self._capture_active_state()
+        self._sync_active_cache_locked()
 
     def _default_robot_state(self) -> dict:
         return {
             "armed": False,
             "in_air": False,
-            "position": Position(0, 0, 0),
-            "velocity_body": [0.0, 0.0, 0.0, 0.0],
+            "position": [0.0, 0.0, 0.0],
+            "velocity": [0.0, 0.0, 0.0],
+            "command_velocity": [0.0, 0.0, 0.0],
+            "yaw_rate": 0.0,
+            "heading_deg": 0.0,
             "battery": (12.6, 1.0),
             "moving": False,
+            "command_mode": "hold",
+            "target": None,
+            "max_speed": 5.0,
+            "motion_seq": 0,
+            "physics_steps": 0,
         }
 
-    def _capture_active_state(self):
-        with self._state_lock:
-            previous = self._robot_states.get(self._active_robot, {})
-            self._robot_states[self._active_robot] = {
-                "armed": self._armed,
-                "in_air": self._in_air,
-                "position": Position(self._position.north, self._position.east, self._position.down),
-                "velocity_body": list(self._velocity_body),
-                "battery": tuple(self._battery),
-                "moving": bool(previous.get("moving", False)),
-            }
+    def _state_for_locked(self, robot_id: str) -> dict:
+        return self._robot_states.setdefault(str(robot_id), self._default_robot_state())
 
-    def _restore_active_state(self):
+    def _sync_active_cache_locked(self):
+        state = self._state_for_locked(self._active_robot)
+        self._position = Position(*state["position"])
+        self._velocity_body = list(state["velocity"]) + [float(state["yaw_rate"])]
+        self._armed = bool(state["armed"])
+        self._in_air = bool(state["in_air"])
+        self._battery = tuple(state["battery"])
+
+    def _ensure_physics_thread(self):
         with self._state_lock:
-            snapshot = self._robot_states.setdefault(self._active_robot, self._default_robot_state())
-            pos = snapshot["position"]
-            self._armed = bool(snapshot["armed"])
-            self._in_air = bool(snapshot["in_air"])
-            self._position = Position(pos.north, pos.east, pos.down)
-            self._velocity_body = list(snapshot["velocity_body"])
-            self._battery = tuple(snapshot["battery"])
+            if self._physics_thread and self._physics_thread.is_alive():
+                return
+            self._physics_stop.clear()
+            self._physics_thread = threading.Thread(
+                target=self._physics_loop,
+                daemon=True,
+                name="mock-physics",
+            )
+            self._physics_thread.start()
+
+    def _physics_loop(self):
+        wall_interval = self._dynamics.dt / self._realtime_factor
+        while not self._physics_stop.is_set():
+            started = time.monotonic()
+            with self._physics_condition:
+                self._step_world_locked()
+                self._physics_condition.notify_all()
+            elapsed = time.monotonic() - started
+            self._physics_stop.wait(max(0.001, wall_interval - elapsed))
+
+    def _step_world_locked(self):
+        for robot_id, state in self._robot_states.items():
+            mode = state["command_mode"]
+            if mode == "scripted":
+                continue
+
+            position = tuple(state["position"])
+            velocity = tuple(state["velocity"])
+            arrived = False
+            if mode == "target" and state["target"] is not None:
+                step = self._dynamics.target_step(
+                    position,
+                    velocity,
+                    state["target"],
+                    state["max_speed"],
+                )
+                arrived = step.arrived
+            else:
+                desired = (
+                    state["command_velocity"]
+                    if mode == "velocity"
+                    else [0.0, 0.0, 0.0]
+                )
+                speed_limit = max(state["max_speed"], _speed(desired), 0.1)
+                step = self._dynamics.velocity_step(
+                    position,
+                    velocity,
+                    desired,
+                    speed_limit,
+                )
+
+            next_position = list(step.position)
+            next_velocity = list(step.velocity)
+            if next_position[2] > 0.0:
+                next_position[2] = 0.0
+                next_velocity[2] = min(0.0, next_velocity[2])
+
+            state["position"] = next_position
+            state["velocity"] = next_velocity
+            state["heading_deg"] = (
+                float(state["heading_deg"])
+                + float(state["yaw_rate"]) * self._dynamics.dt
+            ) % 360.0
+            state["physics_steps"] += 1
+
+            if arrived:
+                state["target"] = None
+                state["command_velocity"] = [0.0, 0.0, 0.0]
+                state["velocity"] = [0.0, 0.0, 0.0]
+                state["command_mode"] = "hold"
+                state["moving"] = False
+            elif mode == "velocity":
+                state["moving"] = (
+                    _speed(state["command_velocity"]) > 0.01
+                    or abs(float(state["yaw_rate"])) > 0.01
+                    or _speed(state["velocity"]) > 0.03
+                )
+            elif mode in {"hold", "brake"}:
+                if _speed(state["velocity"]) <= 0.03:
+                    state["velocity"] = [0.0, 0.0, 0.0]
+                    state["command_mode"] = "hold"
+                    state["moving"] = False
+                else:
+                    state["moving"] = True
+            else:
+                state["moving"] = True
+
+            if state["position"][2] >= -0.02 and mode == "velocity":
+                if float(state["command_velocity"][2]) > 0.0:
+                    state["in_air"] = False
+
+            if robot_id == self._active_robot:
+                self._sync_active_cache_locked()
+
+    def _interrupt_locked(self, state: dict, *, brake=True):
+        state["motion_seq"] += 1
+        state["target"] = None
+        state["command_velocity"] = [0.0, 0.0, 0.0]
+        state["yaw_rate"] = 0.0
+        state["command_mode"] = "brake" if brake else "hold"
+        if not brake:
+            state["velocity"] = [0.0, 0.0, 0.0]
+            state["moving"] = False
+
+    def _execute_target(self, robot_id: str, target, speed: float, label: str) -> ActionResult:
+        if not self._connected:
+            return ActionResult(False, "Not connected")
+        speed = max(0.1, float(speed))
+        target = [float(value) for value in list(target)[:3]]
+        if len(target) != 3:
+            return ActionResult(False, "Target must contain [north, east, down]")
+
+        with self._physics_condition:
+            state = self._state_for_locked(robot_id)
+            start = list(state["position"])
+            distance = math.dist(start, target)
+            state["motion_seq"] += 1
+            motion_seq = state["motion_seq"]
+            start_step = int(state["physics_steps"])
+            state["target"] = target
+            state["command_velocity"] = [0.0, 0.0, 0.0]
+            state["yaw_rate"] = 0.0
+            state["max_speed"] = speed
+            state["command_mode"] = "target"
+            state["moving"] = True
+            if target[2] < -0.02:
+                state["armed"] = True
+                state["in_air"] = True
+            self._physics_condition.notify_all()
+
+        simulated_timeout = max(4.0, distance / speed * 4.0 + 4.0)
+        wall_timeout = simulated_timeout / self._realtime_factor + 1.0
+        started = time.monotonic()
+        deadline = started + wall_timeout
+
+        with self._physics_condition:
+            while True:
+                state = self._state_for_locked(robot_id)
+                if state["motion_seq"] != motion_seq:
+                    return ActionResult(
+                        False,
+                        f"{label} interrupted by a newer command (mock)",
+                        {"position": list(state["position"]), "interrupted": True},
+                        round((time.monotonic() - started) * self._realtime_factor, 2),
+                    )
+                if state["target"] is None and state["command_mode"] == "hold":
+                    final = list(state["position"])
+                    simulated_duration = (time.monotonic() - started) * self._realtime_factor
+                    return ActionResult(
+                        True,
+                        f"{label} complete (mock dynamics)",
+                        {
+                            "position": final,
+                            "velocity": list(state["velocity"]),
+                            "physics_steps": int(state["physics_steps"]) - start_step,
+                            "realtime_factor": self._realtime_factor,
+                        },
+                        round(simulated_duration, 2),
+                    )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    self._interrupt_locked(state, brake=False)
+                    if robot_id == self._active_robot:
+                        self._sync_active_cache_locked()
+                    return ActionResult(
+                        False,
+                        f"{label} timed out (mock dynamics)",
+                        {"position": list(state["position"]), "target": target},
+                        round(simulated_timeout, 2),
+                    )
+                self._physics_condition.wait(timeout=min(0.25, remaining))
 
     def set_active_robot(self, robot_id: str):
         with self._state_lock:
-            robot_id = str(robot_id or "UAV_1")
-            if robot_id == self._active_robot:
-                return
-            self._capture_active_state()
-            self._active_robot = robot_id
-            self._restore_active_state()
+            self._active_robot = str(robot_id or "UAV_1")
+            self._state_for_locked(self._active_robot)
+            self._sync_active_cache_locked()
 
     def get_active_robot(self) -> str:
         with self._state_lock:
@@ -78,51 +277,58 @@ class MockAdapter(SimAdapter):
 
     def seed_fleet(self, robots: dict):
         """Initialize the complete mock fleet from WorldModel robot data."""
-        with self._state_lock:
+        with self._physics_condition:
             for robot_id, robot in (robots or {}).items():
                 position = list(robot.get("position") or [0.0, 0.0, 0.0])
                 position = (position + [0.0, 0.0, 0.0])[:3]
                 battery = float(robot.get("battery", 100.0))
                 if battery > 1.0:
                     battery /= 100.0
-                self._robot_states[str(robot_id)] = {
+                state = self._default_robot_state()
+                state.update({
                     "armed": bool(robot.get("armed", False)),
                     "in_air": bool(robot.get("in_air", False)),
-                    "position": Position(*[float(value) for value in position]),
-                    "velocity_body": [0.0, 0.0, 0.0, 0.0],
-                    "battery": (12.6, max(0.0, min(1.0, battery))),
-                    "moving": False,
-                }
-            self._restore_active_state()
+                    "position": [float(value) for value in position],
+                    "battery": (12.6, _clamp(battery, 0.0, 1.0)),
+                })
+                self._robot_states[str(robot_id)] = state
+            self._state_for_locked(self._active_robot)
+            self._sync_active_cache_locked()
+            self._physics_condition.notify_all()
 
     def retain_fleet(self, robot_ids):
-        """Remove inactive robots while keeping at least one valid active robot."""
+        """Remove inactive robots while keeping at least one active robot."""
         allowed = {str(robot_id) for robot_id in robot_ids if str(robot_id)}
         if not allowed:
             raise ValueError("Mock fleet must contain at least one robot")
-        with self._state_lock:
+        with self._physics_condition:
             self._robot_states = {
                 robot_id: state
                 for robot_id, state in self._robot_states.items()
                 if robot_id in allowed
             }
             for robot_id in allowed:
-                self._robot_states.setdefault(robot_id, self._default_robot_state())
+                self._state_for_locked(robot_id)
             if self._active_robot not in self._robot_states:
                 self._active_robot = sorted(self._robot_states)[0]
-            self._restore_active_state()
+            self._sync_active_cache_locked()
+            self._physics_condition.notify_all()
 
     def get_robot_snapshot(self) -> dict:
-        """Return a thread-safe snapshot for fleet telemetry synchronization."""
+        """Return a thread-safe fleet telemetry snapshot."""
         with self._state_lock:
             return {
                 robot_id: {
-                    "position": state["position"].to_list(),
-                    "velocity": list(state["velocity_body"][:3]),
+                    "position": list(state["position"]),
+                    "velocity": list(state["velocity"]),
+                    "command_velocity": list(state["command_velocity"]),
+                    "heading_deg": float(state["heading_deg"]),
                     "battery": float(state["battery"][1]),
                     "armed": bool(state["armed"]),
                     "in_air": bool(state["in_air"]),
-                    "moving": bool(state.get("moving", False)),
+                    "moving": bool(state["moving"]),
+                    "motion_mode": state["command_mode"],
+                    "target": list(state["target"]) if state["target"] is not None else None,
                 }
                 for robot_id, state in self._robot_states.items()
             }
@@ -138,136 +344,211 @@ class MockAdapter(SimAdapter):
         moving: bool = False,
         in_air: bool = True,
     ):
-        """Set one simulated UAV pose without changing the selected UAV."""
-        with self._state_lock:
-            robot_id = str(robot_id)
-            state = self._robot_states.setdefault(robot_id, self._default_robot_state())
-            state["position"] = Position(float(north), float(east), float(down))
+        """Reset or externally script one UAV pose without selecting it."""
+        with self._physics_condition:
+            state = self._state_for_locked(str(robot_id))
+            state["motion_seq"] += 1
+            state["position"] = [float(north), float(east), min(0.0, float(down))]
             if velocity is not None:
                 values = [float(value) for value in list(velocity)[:3]]
-                state["velocity_body"] = values + [0.0] * (4 - len(values))
+                state["velocity"] = (values + [0.0, 0.0, 0.0])[:3]
+            else:
+                state["velocity"] = [0.0, 0.0, 0.0]
+            state["command_velocity"] = [0.0, 0.0, 0.0]
+            state["target"] = None
             state["moving"] = bool(moving)
+            state["command_mode"] = "scripted" if moving else "hold"
             state["in_air"] = bool(in_air)
             state["armed"] = bool(in_air) or bool(state["armed"])
-            if robot_id == self._active_robot:
-                self._restore_active_state()
+            if str(robot_id) == self._active_robot:
+                self._sync_active_cache_locked()
+            self._physics_condition.notify_all()
 
     def connect(self, connection_str="mock://", timeout=1.0) -> bool:
         self._connected = True
-        logger.info("MockAdapter: ✅ 已连接 (mock)")
+        self._ensure_physics_thread()
+        logger.info(
+            "MockAdapter connected: dt=%.3fs realtime_factor=%.2fx",
+            self._dynamics.dt,
+            self._realtime_factor,
+        )
         return True
 
     def disconnect(self):
         self._connected = False
+        self._physics_stop.set()
+        thread = self._physics_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
 
     def is_connected(self):
         return self._connected
 
     def get_state(self) -> VehicleState:
         with self._state_lock:
+            state = self._state_for_locked(self._active_robot)
+            position = Position(*state["position"])
             return VehicleState(
-                armed=self._armed, in_air=self._in_air, mode="MOCK",
-                position_ned=self._position,
-                position_gps=GPSPosition(47.397971, 8.546163, self._position.altitude),
-                battery_voltage=self._battery[0], battery_percent=self._battery[1],
-                velocity=self._velocity_body[:3],
+                armed=bool(state["armed"]),
+                in_air=bool(state["in_air"]),
+                mode="MOCK_KINEMATIC",
+                position_ned=position,
+                position_gps=GPSPosition(47.397971, 8.546163, position.altitude),
+                battery_voltage=float(state["battery"][0]),
+                battery_percent=float(state["battery"][1]),
+                velocity=list(state["velocity"]),
             )
 
     def get_position(self) -> Position:
-        return self._position
+        with self._state_lock:
+            state = self._state_for_locked(self._active_robot)
+            return Position(*state["position"])
 
     def get_gps(self) -> GPSPosition:
-        return GPSPosition(47.397971, 8.546163, self._position.altitude)
+        position = self.get_position()
+        return GPSPosition(47.397971, 8.546163, position.altitude)
 
     def get_battery(self) -> tuple:
-        return self._battery
+        with self._state_lock:
+            return tuple(self._state_for_locked(self._active_robot)["battery"])
 
     def is_armed(self) -> bool:
-        return self._armed
+        with self._state_lock:
+            return bool(self._state_for_locked(self._active_robot)["armed"])
 
     def is_in_air(self) -> bool:
-        return self._in_air
+        with self._state_lock:
+            return bool(self._state_for_locked(self._active_robot)["in_air"])
 
     def arm(self) -> ActionResult:
-        self._armed = True
-        self._capture_active_state()
-        return ActionResult(True, "ARM (mock)")
-
-    def disarm(self) -> ActionResult:
-        self._armed = False
-        self._capture_active_state()
-        return ActionResult(True, "DISARM (mock)")
-
-    def takeoff(self, altitude=5.0) -> ActionResult:
-        self._armed = True
-        self._in_air = True
-        self._position = Position(0, 0, -altitude)
-        self._capture_active_state()
-        time.sleep(0.1)
-        return ActionResult(True, f"起飞到 {altitude}m (mock)", {"altitude": altitude}, 0.1)
-
-    def land(self) -> ActionResult:
-        self._in_air = False
-        self._position = Position(self._position.north, self._position.east, 0)
-        self._armed = False
-        self._capture_active_state()
-        time.sleep(0.1)
-        return ActionResult(True, "降落 (mock)", duration=0.1)
-
-    def fly_to_ned(self, north, east, down, speed=2.0) -> ActionResult:
-        self._position = Position(north, east, down)
-        self._capture_active_state()
-        dist = (north**2 + east**2 + down**2) ** 0.5
-        dur = dist / speed if speed > 0 else 0.1
-        time.sleep(min(dur, 0.5))
-        return ActionResult(True, f"到达 NED=({north},{east},{down}) (mock)",
-                          {"position": [north, east, down]}, round(dur, 2))
-
-    def hover(self, duration=5.0) -> ActionResult:
-        time.sleep(min(duration, 0.5))
-        return ActionResult(True, f"悬停 {duration}s (mock)",
-                          {"position": self._position.to_list()}, duration)
-
-
-    def set_velocity_body(self, forward: float, right: float, down: float, yaw_rate: float = 0.0) -> ActionResult:
-        """Apply one small body-frame velocity step for keyboard/cockpit control.
-
-        The mock adapter has no background physics loop, so each Socket.IO
-        velocity event advances the in-memory position by a short fixed time
-        step. This keeps the Web cockpit path usable without PX4/Gazebo/AirSim.
-        """
         if not self._connected:
             return ActionResult(False, "Not connected")
+        with self._state_lock:
+            state = self._state_for_locked(self._active_robot)
+            state["armed"] = True
+            self._sync_active_cache_locked()
+        return ActionResult(True, "ARM (mock dynamics)")
 
-        dt = 0.1
-        self._velocity_body = [float(forward), float(right), float(down), float(yaw_rate)]
-        self._position = Position(
-            self._position.north + float(forward) * dt,
-            self._position.east + float(right) * dt,
-            self._position.down + float(down) * dt,
-        )
-        if any(abs(v) > 1e-9 for v in self._velocity_body[:3]):
-            self._in_air = True
-        self._capture_active_state()
+    def disarm(self) -> ActionResult:
+        if not self._connected:
+            return ActionResult(False, "Not connected")
+        with self._physics_condition:
+            state = self._state_for_locked(self._active_robot)
+            self._interrupt_locked(state, brake=False)
+            state["armed"] = False
+            self._sync_active_cache_locked()
+            self._physics_condition.notify_all()
+        return ActionResult(True, "DISARM (mock dynamics)")
+
+    def takeoff(self, altitude=5.0) -> ActionResult:
+        altitude = max(0.5, abs(float(altitude)))
+        robot_id = self.get_active_robot()
+        with self._state_lock:
+            state = self._state_for_locked(robot_id)
+            target = [state["position"][0], state["position"][1], -altitude]
+            state["armed"] = True
+            state["in_air"] = True
+        result = self._execute_target(robot_id, target, min(5.0, max(2.0, altitude)), "Takeoff")
+        if result.success:
+            result.data["altitude"] = altitude
+        return result
+
+    def land(self) -> ActionResult:
+        robot_id = self.get_active_robot()
+        with self._state_lock:
+            state = self._state_for_locked(robot_id)
+            target = [state["position"][0], state["position"][1], 0.0]
+        result = self._execute_target(robot_id, target, 2.5, "Landing")
+        if result.success:
+            with self._state_lock:
+                state = self._state_for_locked(robot_id)
+                state["in_air"] = False
+                state["armed"] = False
+                self._sync_active_cache_locked()
+        return result
+
+    def fly_to_ned(self, north, east, down, speed=2.0) -> ActionResult:
+        robot_id = self.get_active_robot()
+        target = [float(north), float(east), min(0.0, float(down))]
+        return self._execute_target(robot_id, target, speed, "Fly-to")
+
+    def hover(self, duration=5.0) -> ActionResult:
+        if not self._connected:
+            return ActionResult(False, "Not connected")
+        robot_id = self.get_active_robot()
+        self.stop_velocity_for(robot_id)
+        requested = max(0.0, float(duration))
+        time.sleep(min(requested / self._realtime_factor, 0.5))
         return ActionResult(
             True,
-            "velocity_body sent (mock)",
-            {"velocity_body": self._velocity_body, "position": self._position.to_list()},
-            dt,
+            f"Hover {requested:.1f}s (mock dynamics)",
+            {"position": self.get_position().to_list()},
+            requested,
+        )
+
+    def set_velocity_body(self, forward, right, down, yaw_rate=0.0) -> ActionResult:
+        return self.set_velocity_body_for(
+            self.get_active_robot(), forward, right, down, yaw_rate=yaw_rate
+        )
+
+    def set_velocity_body_for(self, robot_id, forward, right, down, yaw_rate=0.0) -> ActionResult:
+        if not self._connected:
+            return ActionResult(False, "Not connected")
+        command = [float(forward), float(right), float(down)]
+        with self._physics_condition:
+            state = self._state_for_locked(str(robot_id))
+            state["motion_seq"] += 1
+            state["target"] = None
+            state["command_velocity"] = command
+            state["yaw_rate"] = float(yaw_rate)
+            state["max_speed"] = max(0.1, _speed(command))
+            state["command_mode"] = "velocity"
+            state["moving"] = _speed(command) > 0.01 or abs(float(yaw_rate)) > 0.01
+            if state["moving"]:
+                state["armed"] = True
+                state["in_air"] = True
+            position = list(state["position"])
+            actual_velocity = list(state["velocity"])
+            if str(robot_id) == self._active_robot:
+                self._sync_active_cache_locked()
+            self._physics_condition.notify_all()
+        return ActionResult(
+            True,
+            "velocity target accepted (mock dynamics)",
+            {
+                "velocity_body": command + [float(yaw_rate)],
+                "velocity_ned": actual_velocity,
+                "position": position,
+            },
+            self._dynamics.dt,
         )
 
     def stop_velocity(self) -> ActionResult:
-        """Stop keyboard/cockpit velocity control in mock mode."""
+        return self.stop_velocity_for(self.get_active_robot())
+
+    def stop_velocity_for(self, robot_id: str) -> ActionResult:
         if not self._connected:
             return ActionResult(False, "Not connected")
-        self._velocity_body = [0.0, 0.0, 0.0, 0.0]
-        self._capture_active_state()
-        return ActionResult(True, "velocity stopped (mock)", {"position": self._position.to_list()})
+        with self._physics_condition:
+            state = self._state_for_locked(str(robot_id))
+            self._interrupt_locked(state, brake=True)
+            position = list(state["position"])
+            if str(robot_id) == self._active_robot:
+                self._sync_active_cache_locked()
+            self._physics_condition.notify_all()
+        return ActionResult(
+            True,
+            "velocity braking requested (mock dynamics)",
+            {"position": position},
+        )
 
     def return_to_launch(self) -> ActionResult:
-        self._position = Position(0, 0, 0)
-        self._velocity_body = [0.0, 0.0, 0.0, 0.0]
-        self._in_air = False
-        self._armed = False
-        self._capture_active_state()
-        return ActionResult(True, "RTL (mock)", duration=0.1)
+        robot_id = self.get_active_robot()
+        result = self._execute_target(robot_id, [0.0, 0.0, 0.0], 5.0, "RTL")
+        if result.success:
+            with self._state_lock:
+                state = self._state_for_locked(robot_id)
+                state["in_air"] = False
+                state["armed"] = False
+                self._sync_active_cache_locked()
+        return result
