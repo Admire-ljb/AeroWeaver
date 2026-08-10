@@ -67,7 +67,21 @@ export function useSocket() {
     socket.on('world_state', (data) => setWorldState(data))
     socket.on('skill_catalog', (data) => setSkillCatalog(data))
     socket.on('skill_result', (data) => setLastSkillResult(data))
-    socket.on('ai_plan_result', (data) => setLastAiPlan(data))
+    socket.on('ai_plan_result', (data) => {
+      setLastAiPlan(data)
+      if (data?.ok === false) {
+        const now = Date.now()
+        const error = data.error || data.message || 'AI request failed'
+        setChatHistory(prev => [
+          ...prev,
+          { role: 'assistant', content: error, intent: 'ERROR', ts: now },
+        ])
+        setLogs(prev => {
+          const next = [...prev, { ts: now, level: 'error', msg: error }]
+          return next.length > 300 ? next.slice(-300) : next
+        })
+      }
+    })
     socket.on('ai_execution_report', (data) => setLastAiReport(data))
     socket.on('ai_thinking', (data) => {
       setAiThinking(data)

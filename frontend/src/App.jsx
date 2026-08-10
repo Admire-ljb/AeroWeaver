@@ -615,11 +615,12 @@ function buildTimeline(logs, chatHistory, language = DEFAULT_LANGUAGE) {
   const fromChat = (chatHistory || []).slice(-10).map((msg) => {
     const isUser = msg.role === 'user'
     const isResult = msg.intent === 'RESULT'
+    const isError = msg.intent === 'ERROR'
     return {
       timestamp: timestampOf(msg.ts || msg.time),
       time: formatLogTime(msg.ts || msg.time),
-      tag: isUser ? 'User' : isResult ? 'Result' : 'Assistant',
-      tone: isUser ? 'user' : isResult ? 'result' : 'assistant',
+      tag: isUser ? 'User' : isError ? 'Error' : isResult ? 'Result' : 'Assistant',
+      tone: isUser ? 'user' : isError ? 'error' : isResult ? 'result' : 'assistant',
       text: msg.content || '',
       source: 'chat',
     }
