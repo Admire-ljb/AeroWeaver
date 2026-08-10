@@ -25,10 +25,16 @@ llm_client.py  —— 统一 LLM 调用层
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 import urllib.request
 import urllib.error
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
+_TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
 
 
 def _strip_thinking(text: str) -> str:
@@ -63,13 +69,30 @@ def _friendly_http_error(code: int, body: str, model: str) -> str:
     body_l = (body or "").lower()
     if code in (401, 403):
         return "模型服务鉴权失败：请检查 API Key 是否正确，或该 Key 是否有权限访问当前模型。"
+    if code == 402:
+        return "模型服务账户余额不足：请在模型服务商控制台充值后重试。"
     if code == 404 or "model_not_found" in body_l or "model" in body_l and "not found" in body_l:
         return f"模型不可用：请检查模型名 `{model}` 是否存在，或当前渠道是否支持这个模型。"
     if code == 429:
-        return "模型服务请求过于频繁或额度不足：请稍后重试，或切换到其他模型渠道。"
+        return "模型服务请求过于频繁：系统已自动重试，请稍后再试。"
     if code in (500, 502, 503, 504):
-        return "模型服务暂时不可用：请稍后重试，或切换到备用模型渠道。"
+        return "模型服务暂时不可用：系统已自动重试，请稍后再试。"
     return f"模型服务返回错误 HTTP {code}：请检查渠道配置。"
+
+
+def _friendly_connection_error(reason: Any) -> str:
+    reason_l = str(reason or "").lower()
+    if any(marker in reason_l for marker in (
+        "temporary failure in name resolution",
+        "name or service not known",
+        "getaddrinfo failed",
+    )):
+        return "模型服务域名解析暂时失败：系统已自动重试，请稍后再试。"
+    if "timed out" in reason_l or "timeout" in reason_l:
+        return "模型服务响应超时：系统已自动重试，请稍后再试。"
+    if "reset" in reason_l or "closed" in reason_l:
+        return "模型服务连接被中断：系统已自动重试，请稍后再试。"
+    return "暂时无法连接模型服务：系统已自动重试，请稍后再试。"
 
 
 # ── LLMClient ────────────────────────────────────────────────────────────────
@@ -91,6 +114,23 @@ class LLMClient:
         self._api_key  = provider_cfg["api_key"]
         self._model    = model
         self._timeout  = provider_cfg.get("timeout", 60)
+        try:
+            self._max_retries = max(0, int(provider_cfg.get("max_retries", 2)))
+        except (TypeError, ValueError):
+            self._max_retries = 2
+
+    def _wait_before_retry(self, operation: str, attempt: int, reason: Any) -> None:
+        delay = min(0.5 * (2 ** attempt), 2.0)
+        logger.warning(
+            "%s transient failure for model %s; retry %d/%d in %.1fs: %s",
+            operation,
+            self._model,
+            attempt + 1,
+            self._max_retries,
+            delay,
+            reason,
+        )
+        time.sleep(delay)
 
     # ── 公开接口 ──────────────────────────────────────────────────────────────
 
@@ -170,43 +210,54 @@ class LLMClient:
             method="POST",
         )
 
-        try:
+        for attempt in range(self._max_retries + 1):
             chunks: list[str] = []
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8").strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    payload_str = line[5:].strip()
-                    if payload_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(payload_str)
-                        delta = chunk["choices"][0].get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            chunks.append(content)
-                            if on_chunk:
-                                on_chunk(content)
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
+            try:
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    for raw_line in resp:
+                        line = raw_line.decode("utf-8").strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        payload_str = line[5:].strip()
+                        if payload_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(payload_str)
+                            delta = chunk["choices"][0].get("delta", {})
+                            content = delta.get("content")
+                            if content:
+                                chunks.append(content)
+                                if on_chunk:
+                                    on_chunk(content)
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
 
-            full_text = "".join(chunks).strip()
-            # 过滤掉推理模型的 <think>...</think> 块，只保留最终回复
-            full_text = _strip_thinking(full_text)
-            return full_text
-
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise LLMUserError(
-                _friendly_http_error(e.code, body, self._model),
-                detail=f"HTTP {e.code} from {url}: {body[:400]}",
-            ) from e
-        except urllib.error.URLError as e:
-            raise LLMUserError(
-                "无法连接模型服务：请检查 Base URL 是否正确、网络是否可达。",
-                detail=f"URLError from {url}: {e.reason}",
-            ) from e
+                return _strip_thinking("".join(chunks).strip())
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                if e.code in _TRANSIENT_HTTP_CODES and attempt < self._max_retries:
+                    self._wait_before_retry("chat", attempt, f"HTTP {e.code}")
+                    continue
+                raise LLMUserError(
+                    _friendly_http_error(e.code, body, self._model),
+                    detail=f"HTTP {e.code} from {url}: {body[:400]}",
+                ) from e
+            except urllib.error.URLError as e:
+                if attempt < self._max_retries and not chunks:
+                    self._wait_before_retry("chat", attempt, e.reason)
+                    continue
+                raise LLMUserError(
+                    _friendly_connection_error(e.reason),
+                    detail=f"URLError from {url} after {attempt + 1} attempt(s): {e.reason}",
+                ) from e
+            except (TimeoutError, ConnectionError, OSError) as e:
+                if attempt < self._max_retries and not chunks:
+                    self._wait_before_retry("chat", attempt, e)
+                    continue
+                raise LLMUserError(
+                    _friendly_connection_error(e),
+                    detail=f"Network error from {url} after {attempt + 1} attempt(s): {e}",
+                ) from e
 
     def chat_with_tools(
         self,
@@ -288,43 +339,55 @@ class LLMClient:
             method="POST",
         )
 
-        try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                body = resp.read().decode("utf-8")
+        for attempt in range(self._max_retries + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    body = resp.read().decode("utf-8")
 
-            response_json = json.loads(body)
-            choice = response_json["choices"][0]
-            finish_reason = choice.get("finish_reason", "stop")
-            message = choice.get("message", {})
+                response_json = json.loads(body)
+                choice = response_json["choices"][0]
+                finish_reason = choice.get("finish_reason", "stop")
+                message = choice.get("message", {})
 
-            # 过滤推理链
-            content = message.get("content") or ""
-            if content:
-                content = _strip_thinking(content)
-                message = dict(message)
-                message["content"] = content
+                content = message.get("content") or ""
+                if content:
+                    message = dict(message)
+                    message["content"] = _strip_thinking(content)
 
-            return {
-                "finish_reason": finish_reason,
-                "message":       message,
-            }
-
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise LLMUserError(
-                _friendly_http_error(e.code, body, self._model),
-                detail=f"chat_with_tools HTTP {e.code} from {url}: {body[:400]}",
-            ) from e
-        except urllib.error.URLError as e:
-            raise LLMUserError(
-                "无法连接模型服务：请检查 Base URL 是否正确、网络是否可达。",
-                detail=f"chat_with_tools URLError from {url}: {e.reason}",
-            ) from e
-        except (json.JSONDecodeError, KeyError, IndexError) as e:
-            raise LLMUserError(
-                "模型服务响应格式异常：请确认该地址兼容 OpenAI Chat Completions 接口。",
-                detail=f"chat_with_tools parse failed: {e}",
-            ) from e
+                return {
+                    "finish_reason": finish_reason,
+                    "message": message,
+                }
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                if e.code in _TRANSIENT_HTTP_CODES and attempt < self._max_retries:
+                    self._wait_before_retry("chat_with_tools", attempt, f"HTTP {e.code}")
+                    continue
+                raise LLMUserError(
+                    _friendly_http_error(e.code, body, self._model),
+                    detail=f"chat_with_tools HTTP {e.code} from {url}: {body[:400]}",
+                ) from e
+            except urllib.error.URLError as e:
+                if attempt < self._max_retries:
+                    self._wait_before_retry("chat_with_tools", attempt, e.reason)
+                    continue
+                raise LLMUserError(
+                    _friendly_connection_error(e.reason),
+                    detail=f"chat_with_tools URLError from {url} after {attempt + 1} attempt(s): {e.reason}",
+                ) from e
+            except (TimeoutError, ConnectionError, OSError) as e:
+                if attempt < self._max_retries:
+                    self._wait_before_retry("chat_with_tools", attempt, e)
+                    continue
+                raise LLMUserError(
+                    _friendly_connection_error(e),
+                    detail=f"chat_with_tools network error from {url} after {attempt + 1} attempt(s): {e}",
+                ) from e
+            except (json.JSONDecodeError, KeyError, IndexError) as e:
+                raise LLMUserError(
+                    "模型服务响应格式异常：请确认该地址兼容 OpenAI Chat Completions 接口。",
+                    detail=f"chat_with_tools parse failed: {e}",
+                ) from e
 
     def __repr__(self) -> str:
         return f"<LLMClient provider={self._base_url} model={self._model}>"
