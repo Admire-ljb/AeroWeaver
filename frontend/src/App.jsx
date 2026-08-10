@@ -242,17 +242,6 @@ function localizedSensorOptions(language) {
   }))
 }
 
-const CITY_LINES = [
-  { className: 'street street-a' },
-  { className: 'street street-b' },
-  { className: 'street street-c' },
-  { className: 'street street-d' },
-  { className: 'street street-e' },
-  { className: 'street street-f' },
-  { className: 'street street-g' },
-  { className: 'street street-h' },
-  { className: 'street street-i' },
-]
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
@@ -998,7 +987,7 @@ function MissionMap({
 
         <div
           ref={mapRef}
-          className={`city-map ${sceneMode ? 'scene-mode' : ''} ${mapPickRequest || mapTools.measure || mapTools.area ? 'picking' : ''} ${!mapPickRequest && !mapTools.measure && !mapTools.area ? 'can-pan' : ''} ${isPanning ? 'is-panning' : ''} ${!layerOptions.grid ? 'no-grid' : ''} ${!layerOptions.roads ? 'no-roads' : ''}`}
+          className={`city-map ${sceneMode ? 'scene-mode' : ''} ${mapPickRequest || mapTools.measure || mapTools.area ? 'picking' : ''} ${!mapPickRequest && !mapTools.measure && !mapTools.area ? 'can-pan' : ''} ${isPanning ? 'is-panning' : ''} ${!layerOptions.grid ? 'no-grid' : ''}`}
           onClick={handleMapClick}
           onWheel={handleWheel}
           onPointerDown={handlePointerDown}
@@ -1016,7 +1005,6 @@ function MissionMap({
               />
             )}
             <div className="map-noise" />
-            {CITY_LINES.map((line) => <span key={line.className} className={line.className} />)}
           </div>
 
           {mapPickRequest && (
@@ -1216,7 +1204,6 @@ function MapLayerPanel({ language, layerOptions, onToggleLayer }) {
   const t = makeTranslator(language)
   const layers = [
     { key: 'grid', label: t('坐标网格', 'Coordinate Grid') },
-    { key: 'roads', label: t('地图线框', 'Map Lines') },
     { key: 'routes', label: t('历史航迹', 'Recorded Tracks') },
     { key: 'labels', label: t('无人机标签', 'UAV Labels') },
   ]
@@ -2588,7 +2575,7 @@ export default function App() {
   const [desiredUavCount, setDesiredUavCount] = useState(DEFAULT_UAV_COUNT)
   const [fleetSync, setFleetSync] = useState({ status: 'idle', message: '' })
   const [mapTools, setMapTools] = useState({ measure: false, area: false, layers: false, settings: false })
-  const [layerOptions, setLayerOptions] = useState({ grid: true, roads: true, routes: false, labels: true })
+  const [layerOptions, setLayerOptions] = useState({ grid: true, routes: false, labels: true })
   const [measurementPoints, setMeasurementPoints] = useState([])
   const [selectedTaskArea, setSelectedTaskArea] = useState(null)
   const [missionPrompt, setMissionPrompt] = useState('')

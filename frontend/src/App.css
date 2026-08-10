@@ -294,11 +294,6 @@
     #061724;
 }
 
-.city-map.no-roads .map-noise,
-.city-map.no-roads .street {
-  display: none;
-}
-
 .city-map.scene-mode {
   background: #020812;
   isolation: isolate;
@@ -405,8 +400,7 @@
   font-weight: 700;
 }
 
-.city-map.scene-mode .map-noise,
-.city-map.scene-mode .street {
+.city-map.scene-mode .map-noise {
   opacity: 0.1;
 }
 
@@ -590,24 +584,6 @@
     linear-gradient(150deg, rgba(20, 226, 226, 0.1) 12%, transparent 12.5%, transparent 87%, rgba(20, 226, 226, 0.1) 87.5%);
   background-size: 42px 42px;
 }
-
-.street {
-  position: absolute;
-  height: 2px;
-  background: rgba(12, 216, 232, 0.42);
-  box-shadow: 0 0 14px rgba(12, 216, 232, 0.22);
-  transform-origin: left center;
-}
-
-.street-a { left: -4%; top: 24%; width: 57%; transform: rotate(-8deg); }
-.street-b { left: 5%; top: 58%; width: 72%; transform: rotate(7deg); }
-.street-c { left: 22%; top: 9%; width: 2px; height: 86%; transform: rotate(-1deg); }
-.street-d { left: 40%; top: 19%; width: 2px; height: 47%; transform: rotate(23deg); }
-.street-e { right: 7%; top: 3%; width: 2px; height: 95%; transform: rotate(8deg); }
-.street-f { left: 54%; top: 35%; width: 52%; transform: rotate(-24deg); }
-.street-g { left: 67%; top: 4%; width: 2px; height: 82%; transform: rotate(0deg); }
-.street-h { left: 8%; top: 73%; width: 66%; transform: rotate(-2deg); }
-.street-i { left: 0; top: 42%; width: 43%; transform: rotate(38deg); }
 
 .map-mode-bar,
 .map-tool-strip {
