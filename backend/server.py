@@ -2471,8 +2471,15 @@ def api_llm_config():
     """
     import config as cfg
 
+    def _key_configured(key):
+        return bool(key) and key not in {
+            "none", "your-llm-api-key-here", "your-key-here"
+        }
+
     def _mask_key(key):
-        if not key or len(key) < 8:
+        if not _key_configured(key):
+            return ""
+        if len(key) < 8:
             return "***"
         return key[:4] + "..." + key[-4:]
 
@@ -2482,6 +2489,7 @@ def api_llm_config():
             "api_type": p.get("api_type", "openai_compat"),
             "base_url": p.get("base_url", ""),
             "api_key_masked": _mask_key(p.get("api_key", "")),
+            "api_key_configured": _key_configured(p.get("api_key", "")),
             "default_model": p.get("default_model", ""),
             "timeout": p.get("timeout", 60),
         }
@@ -2581,10 +2589,11 @@ def api_add_provider():
         return jsonify({"ok": False, "msg": "default_model 不能为空"}), 400
 
     is_new = name not in cfg.PROVIDERS
+    existing_key = cfg.PROVIDERS.get(name, {}).get("api_key", "")
     cfg.PROVIDERS[name] = {
         "api_type": "openai_compat",
         "base_url": base_url.rstrip("/"),
-        "api_key": api_key or "none",
+        "api_key": api_key or existing_key,
         "default_model": default_model,
         "timeout": int(timeout),
     }
