@@ -210,6 +210,15 @@ class SimAdapter(ABC):
         """飞到指定 GPS 坐标（可选实现）。"""
         return ActionResult(success=False, message="fly_to_gps not implemented")
 
+    def reset_robot_pose(
+        self, robot_id: str, position: list, *, in_air: bool = True
+    ) -> ActionResult:
+        """Atomically set a pose during a server-authorized scene reset."""
+        return ActionResult(
+            success=False,
+            message="scene reset pose is not supported by this adapter",
+        )
+
     def set_heading(self, heading_deg: float) -> ActionResult:
         """设置航向角（可选实现）。"""
         return ActionResult(success=False, message="set_heading not implemented")

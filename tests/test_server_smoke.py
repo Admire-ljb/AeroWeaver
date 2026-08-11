@@ -1,4 +1,6 @@
 import importlib
+import threading
+from types import SimpleNamespace
 
 
 def test_server_imports_and_exposes_flask_app():
@@ -69,3 +71,128 @@ def test_non_inventory_message_is_not_intercepted():
     server = importlib.import_module("server")
 
     assert server._build_skill_inventory_reply("让 UAV_1 起飞") is None
+
+
+def test_mock_registry_hides_sensor_dependent_skills(monkeypatch):
+    server = importlib.import_module("server")
+    monkeypatch.setenv("SIM_ADAPTER", "mock")
+
+    registry, count = server._build_robot_registry("UAV_1", "UAV")
+    catalog_names = {entry["name"] for entry in registry.get_skill_catalog()}
+
+    assert registry.adapter_profile == "mock"
+    assert count == len(registry)
+    assert {
+        "takeoff", "land", "fly_to", "fly_relative", "hover",
+        "get_position", "get_battery", "look_around", "report",
+    } <= catalog_names
+    assert server._MOCK_HIDDEN_SENSOR_SKILLS.isdisjoint(catalog_names)
+    assert "area_recon" not in catalog_names
+    assert registry.allows_soft_skill("area_recon") is False
+
+
+def test_mock_profile_hides_document_skill_api(monkeypatch):
+    server = importlib.import_module("server")
+    monkeypatch.setenv("SIM_ADAPTER", "mock")
+    registry, _ = server._build_robot_registry("UAV_1", "UAV")
+    monkeypatch.setattr(server.state, "robot_registries", {"UAV_1": registry})
+    client = server.app.test_client()
+
+    listing = client.get("/api/skills/soft")
+    creation = client.post(
+        "/api/skills/soft",
+        json={"name": "mock_hidden_strategy", "content": "# hidden"},
+    )
+
+    assert listing.status_code == 200
+    assert listing.get_json()["count"] == 0
+    assert listing.get_json()["skills"] == []
+    assert creation.status_code == 409
+    assert creation.get_json()["adapter_profile"] == "mock"
+
+
+def test_global_motion_stop_brakes_every_assigned_uav(monkeypatch):
+    server = importlib.import_module("server")
+    calls = []
+
+    class FakeAdapter:
+        def request_stop(self):
+            calls.append(("interrupt", None))
+
+        def stop_velocity_for(self, robot_id):
+            calls.append(("brake", robot_id))
+            return SimpleNamespace(success=True)
+
+    adapter = FakeAdapter()
+    monkeypatch.setattr("adapters.adapter_manager.get_all_adapters", lambda: [adapter])
+    monkeypatch.setattr("adapters.adapter_manager.get_primary_adapter", lambda: adapter)
+
+    stopped = server._stop_all_adapter_motion(["UAV_1", "UAV_2", "UAV_3"])
+
+    assert calls.count(("interrupt", None)) == 1
+    assert [(kind, robot) for kind, robot in calls if kind == "brake"] == [
+        ("brake", "UAV_1"),
+        ("brake", "UAV_2"),
+        ("brake", "UAV_3"),
+    ]
+    assert stopped == ["UAV_1", "UAV_2", "UAV_3"]
+
+
+def test_global_stop_cancels_mission_agents_and_communication(monkeypatch):
+    server = importlib.import_module("server")
+    from brain.mission_progress import MissionProgressTracker
+    from brain.uav_agent_context import UAVAgentContextStore
+
+    tracker = MissionProgressTracker()
+    tracker.start(
+        "mission-stop",
+        "Search the task area",
+        "Split the area",
+        [
+            {"robot_id": "UAV_1", "task": "west"},
+            {"robot_id": "UAV_2", "task": "east"},
+        ],
+        [],
+        10,
+    )
+    contexts = UAVAgentContextStore()
+    contexts.establish_links(["UAV_1", "UAV_2"], "mission-stop")
+    stop_event = threading.Event()
+
+    monkeypatch.setattr(server.state, "mission_progress", tracker)
+    monkeypatch.setattr(server.state, "agent_contexts", contexts)
+    monkeypatch.setattr(server.state, "_ai_stop_event", stop_event)
+    monkeypatch.setattr(server.state, "is_executing", False)
+    monkeypatch.setattr(server.state, "_current_agent_loop", None)
+    monkeypatch.setattr(server.state, "executing_robot_snapshot", lambda: ["UAV_1", "UAV_2"])
+    monkeypatch.setattr(server.state, "get_world_snapshot", lambda: {"robots": {}})
+    monkeypatch.setattr(server.state, "push_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "_stop_all_adapter_motion", lambda robot_ids: list(robot_ids))
+    monkeypatch.setattr(server, "_emit_commander_progress", lambda sid: tracker.snapshot())
+    monkeypatch.setattr(server.socketio, "emit", lambda *args, **kwargs: None)
+
+    result = server._stop_current_task()
+    mission = tracker.snapshot()
+    context_snapshot = contexts.snapshot()
+
+    assert result["stopped"] is True
+    assert result["status"] == "cancelled"
+    assert result["robot_ids"] == ["UAV_1", "UAV_2"]
+    assert stop_event.is_set()
+    assert mission["status"] == "cancelled"
+    assert all(agent["status"] == "cancelled" for agent in mission["agents"])
+    assert context_snapshot["contexts"]["UAV_1"]["status"] == "cancelled"
+    assert not any(link["status"] == "active" for link in context_snapshot["links"])
+
+
+def test_real_adapter_registry_keeps_perception_and_document_skills(monkeypatch):
+    server = importlib.import_module("server")
+    monkeypatch.setenv("SIM_ADAPTER", "airsim")
+
+    registry, _ = server._build_robot_registry("UAV_1", "UAV")
+    catalog_names = {entry["name"] for entry in registry.get_skill_catalog()}
+
+    assert registry.adapter_profile == "default"
+    assert {"observe", "perceive", "detect_object", "get_sensor_data"} <= catalog_names
+    assert "area_recon" in catalog_names
+    assert registry.allows_soft_skill("area_recon") is True

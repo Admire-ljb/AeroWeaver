@@ -58,6 +58,19 @@ def test_chat_retries_temporary_dns_failure_and_keeps_model():
     assert urlopen.call_count == 2
     payload = json.loads(urlopen.call_args_list[-1].args[0].data)
     assert payload["model"] == "deepseek-v4-flash"
+    assert payload["thinking"] == {"type": "disabled"}
+
+
+def test_chat_rejects_empty_streamed_response():
+    response = FakeResponse([
+        b'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n',
+        b"data: [DONE]\n",
+    ])
+
+    with patch(
+        "llm_client.urllib.request.urlopen", return_value=response
+    ), pytest.raises(LLMUserError, match="未返回有效答复"):
+        make_client(max_retries=0).chat([{"role": "user", "content": "ping"}])
 
 
 def test_chat_reports_dns_failure_after_retry_budget():

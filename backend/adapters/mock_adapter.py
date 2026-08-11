@@ -55,6 +55,8 @@ class MockAdapter(SimAdapter):
         self._connected = False
         self._active_robot = "UAV_1"
         self._robot_states = {self._active_robot: self._default_robot_state()}
+        self._operating_bounds = None
+        self._bounded_robot_ids = set()
         self._position = Position(0.0, 0.0, 0.0)
         self._velocity_body = [0.0, 0.0, 0.0, 0.0]
         self._armed = False
@@ -90,6 +92,17 @@ class MockAdapter(SimAdapter):
         self._armed = bool(state["armed"])
         self._in_air = bool(state["in_air"])
         self._battery = tuple(state["battery"])
+
+    def _constrain_position_locked(self, robot_id: str, position) -> tuple[list[float], list[bool]]:
+        values = [float(value) for value in list(position)[:3]]
+        values = (values + [0.0, 0.0, 0.0])[:3]
+        bounds = self._operating_bounds
+        if not bounds or (self._bounded_robot_ids and str(robot_id) not in self._bounded_robot_ids):
+            return values, [False, False]
+        original = list(values)
+        values[0] = _clamp(values[0], bounds["north_min"], bounds["north_max"])
+        values[1] = _clamp(values[1], bounds["east_min"], bounds["east_max"])
+        return values, [values[0] != original[0], values[1] != original[1]]
 
     def _ensure_physics_thread(self):
         with self._state_lock:
@@ -146,6 +159,17 @@ class MockAdapter(SimAdapter):
 
             next_position = list(step.position)
             next_velocity = list(step.velocity)
+            next_position, boundary_hits = self._constrain_position_locked(robot_id, next_position)
+            for axis, hit in enumerate(boundary_hits):
+                if not hit:
+                    continue
+                next_velocity[axis] = 0.0
+                command = float(state["command_velocity"][axis])
+                at_minimum = next_position[axis] <= self._operating_bounds[
+                    "north_min" if axis == 0 else "east_min"
+                ]
+                if (at_minimum and command < 0.0) or (not at_minimum and command > 0.0):
+                    state["command_velocity"][axis] = 0.0
             if next_position[2] > 0.0:
                 next_position[2] = 0.0
                 next_velocity[2] = min(0.0, next_velocity[2])
@@ -207,6 +231,7 @@ class MockAdapter(SimAdapter):
 
         with self._physics_condition:
             state = self._state_for_locked(robot_id)
+            target, _ = self._constrain_position_locked(robot_id, target)
             start = list(state["position"])
             distance = math.dist(start, target)
             state["motion_seq"] += 1
@@ -275,6 +300,10 @@ class MockAdapter(SimAdapter):
         with self._state_lock:
             return self._active_robot
 
+    @property
+    def realtime_factor(self) -> float:
+        return self._realtime_factor
+
     def seed_fleet(self, robots: dict):
         """Initialize the complete mock fleet from WorldModel robot data."""
         with self._physics_condition:
@@ -333,6 +362,34 @@ class MockAdapter(SimAdapter):
                 for robot_id, state in self._robot_states.items()
             }
 
+    def set_operating_bounds(self, bounds: dict, robot_ids=None) -> dict:
+        """Install a hard rectangular N/E boundary for the active mission."""
+        required = ("north_min", "north_max", "east_min", "east_max")
+        normalized = {key: float(bounds[key]) for key in required}
+        if (
+            normalized["north_max"] <= normalized["north_min"]
+            or normalized["east_max"] <= normalized["east_min"]
+        ):
+            raise ValueError("Operating bounds must have positive north/east spans")
+        with self._physics_condition:
+            self._operating_bounds = normalized
+            self._bounded_robot_ids = {str(item) for item in (robot_ids or []) if str(item)}
+            for robot_id, state in self._robot_states.items():
+                if self._bounded_robot_ids and robot_id not in self._bounded_robot_ids:
+                    continue
+                state["position"], _ = self._constrain_position_locked(robot_id, state["position"])
+                if state["target"] is not None:
+                    state["target"], _ = self._constrain_position_locked(robot_id, state["target"])
+            self._sync_active_cache_locked()
+            self._physics_condition.notify_all()
+        return dict(normalized)
+
+    def clear_operating_bounds(self) -> None:
+        with self._physics_condition:
+            self._operating_bounds = None
+            self._bounded_robot_ids.clear()
+            self._physics_condition.notify_all()
+
     def set_robot_position(
         self,
         robot_id: str,
@@ -348,7 +405,10 @@ class MockAdapter(SimAdapter):
         with self._physics_condition:
             state = self._state_for_locked(str(robot_id))
             state["motion_seq"] += 1
-            state["position"] = [float(north), float(east), min(0.0, float(down))]
+            bounded_position, _ = self._constrain_position_locked(
+                str(robot_id), [float(north), float(east), min(0.0, float(down))]
+            )
+            state["position"] = bounded_position
             if velocity is not None:
                 values = [float(value) for value in list(velocity)[:3]]
                 state["velocity"] = (values + [0.0, 0.0, 0.0])[:3]
@@ -363,6 +423,22 @@ class MockAdapter(SimAdapter):
             if str(robot_id) == self._active_robot:
                 self._sync_active_cache_locked()
             self._physics_condition.notify_all()
+
+    def reset_robot_pose(self, robot_id: str, position: list, *, in_air: bool = True) -> ActionResult:
+        """Expose direct pose assignment only to the guarded initialization skill."""
+        values = list(position or [])
+        if len(values) < 3:
+            return ActionResult(False, "position requires three coordinates")
+        self.set_robot_position(
+            str(robot_id),
+            float(values[0]),
+            float(values[1]),
+            float(values[2]),
+            moving=False,
+            in_air=bool(in_air),
+        )
+        final_position = self.get_robot_snapshot()[str(robot_id)]["position"]
+        return ActionResult(True, "scene start pose initialized", {"position": final_position})
 
     def connect(self, connection_str="mock://", timeout=1.0) -> bool:
         self._connected = True
@@ -520,6 +596,34 @@ class MockAdapter(SimAdapter):
                 "velocity_ned": actual_velocity,
                 "position": position,
             },
+            self._dynamics.dt,
+        )
+
+    def set_velocity_ned_for(self, robot_id, north, east, down) -> ActionResult:
+        """Set a persistent world-frame velocity for autonomous Mock agents."""
+        if not self._connected:
+            return ActionResult(False, "Not connected")
+        command = [float(north), float(east), float(down)]
+        with self._physics_condition:
+            state = self._state_for_locked(str(robot_id))
+            state["motion_seq"] += 1
+            state["target"] = None
+            state["command_velocity"] = command
+            state["yaw_rate"] = 0.0
+            state["max_speed"] = max(0.1, _speed(command))
+            state["command_mode"] = "velocity"
+            state["moving"] = _speed(command) > 0.01
+            if state["moving"]:
+                state["armed"] = True
+                state["in_air"] = True
+            position = list(state["position"])
+            if str(robot_id) == self._active_robot:
+                self._sync_active_cache_locked()
+            self._physics_condition.notify_all()
+        return ActionResult(
+            True,
+            "persistent NED velocity accepted (mock dynamics)",
+            {"velocity_ned": command, "position": position, "persistent": True},
             self._dynamics.dt,
         )
 

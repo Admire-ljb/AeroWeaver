@@ -20,12 +20,14 @@ import os
 import json
 import time
 import base64
+import math
 import threading
 import secrets
 # Phase 0 refactor: removed doctor, device_manager, bootstrap modules
 import logging
 import requests
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 def _resolve_runtime_layout(server_file):
@@ -45,6 +47,9 @@ sys.path.insert(0, _BACKEND_DIR)
 from flask import Flask, Response, jsonify, request, send_from_directory, send_file, stream_with_context
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
+from brain.uav_agent_context import UAVAgentContextStore, normalize_robot_id
+from brain.mission_progress import MissionProgressTracker, balance_movement_plan
+from runtime.uav_agent_runtime import UAVAgentRuntime
 
 # ── 日志 ──────────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -108,6 +113,7 @@ class AppState:
         self.is_executing: bool = False    # AI/plan-level execution state
         self.executing_robots: set[str] = set()
         self._execution_lock = threading.Lock()
+        self._mode_lock = threading.Lock()
         self.current_robot: str = "UAV_1"  # 当前选中的机器人
         self._desired_airsim_fleet_count: int = _load_persisted_fleet_count()
 
@@ -128,6 +134,8 @@ class AppState:
         self._ai_thread: Optional[threading.Thread] = None
         self._ai_stop_event = threading.Event()
         self._current_agent_loop = None  # 当前运行的 AgentLoop 实例
+        self.agent_contexts = UAVAgentContextStore()
+        self.mission_progress = MissionProgressTracker()
 
         # 通用设备协议状态（docs/DEVICE_PROTOCOL.md）
         # devices: device_id -> registered metadata/runtime state
@@ -473,7 +481,36 @@ def _mjpeg_response(frame_getter, fps: int, name: str):
 #  系统初始化
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_robot_registry(robot_id: str, robot_type: str):
+_MOCK_SKILL_NAMES = frozenset({
+    "takeoff", "land", "fly_to", "fly_relative", "hover", "change_altitude",
+    "get_position", "get_battery", "return_to_launch", "look_around",
+    "mark_location", "get_marks",
+    "swarm_area_search", "swarm_rendezvous", "swarm_formation_hold",
+    "swarm_orbit_hold", "swarm_perimeter_patrol", "swarm_waypoint_inspection",
+    "swarm_relay_deploy", "swarm_escort_route", "set_fleet_size",
+    "teleport_initialize",
+    "steer_velocity",
+    "run_python", "http_request", "read_file", "write_file",
+    "report", "alert", "ask_user", "update_map", "create_composite_skill",
+})
+
+_MOCK_HIDDEN_SENSOR_SKILLS = frozenset({
+    "observe", "perceive", "detect_object", "recognize_speech",
+    "fuse_perception", "scan_area", "get_sensor_data", "orbit_inspect",
+})
+
+
+def _skill_profile_name(adapter_name: str | None = None) -> str:
+    configured = str(adapter_name or os.getenv("SIM_ADAPTER", "px4")).strip().lower()
+    return "mock" if configured == "mock" else "default"
+
+
+def _build_robot_registry(
+    robot_id: str,
+    robot_type: str,
+    *,
+    adapter_name: str | None = None,
+):
     """
     为单台机器人构建独立的 SkillRegistry，只注册该机器人类型支持的技能。
     每次调用都返回全新的实例（含独立的 Skill 对象），执行历史互不干扰。
@@ -495,14 +532,14 @@ def _build_robot_registry(robot_id: str, robot_type: str):
         SwarmRelayDeploy, SwarmEscortRoute,
     )
     from skills.fleet_skills import SetFleetSize, configure_fleet_resize_handler
+    from skills.scenario_skills import SteerVelocity, TeleportInitialize
     configure_fleet_resize_handler(_resize_fleet_from_skill)
-    from skills.perception_skills import (
-        DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe, Perceive,
-    )
     from skills.cognitive_skills import (
         RunPython, HttpRequest, ReadFile, WriteFile,
         Report, Alert, AskUser, UpdateMap,
     )
+
+    profile = _skill_profile_name(adapter_name)
 
     # 全量技能工厂（每次都 new 出新实例，避免共享状态）
     ALL_SKILL_FACTORIES = [
@@ -511,25 +548,76 @@ def _build_robot_registry(robot_id: str, robot_type: str):
         LookAround, MarkLocation, GetMarks, OrbitInspect,
         SwarmAreaSearch, SwarmRendezvous, SwarmFormationHold, SwarmOrbitHold,
         SwarmPerimeterPatrol, SwarmWaypointInspection,
-        SwarmRelayDeploy, SwarmEscortRoute, SetFleetSize,
-        # 软技能不再注册 Python 类，改为文档驱动 (skills/soft_docs/*.md)
-        DetectObject, RecognizeSpeech, FusePerception, ScanArea, GetSensorData, Observe, Perceive,
+        SwarmRelayDeploy, SwarmEscortRoute, SetFleetSize, TeleportInitialize,
         # 认知技能（信息层）
         RunPython, HttpRequest, ReadFile, WriteFile,
         # 通信技能（主动交互）
         Report, Alert, AskUser, UpdateMap,
     ]
 
-    reg = SkillRegistry(auto_generate_doc=False)
-    count = 0
+    if profile != "mock":
+        from skills.perception_skills import (
+            DetectObject, RecognizeSpeech, FusePerception, ScanArea,
+            GetSensorData, Observe, Perceive,
+        )
+        ALL_SKILL_FACTORIES.extend([
+            DetectObject, RecognizeSpeech, FusePerception, ScanArea,
+            GetSensorData, Observe, Perceive,
+        ])
+    else:
+        ALL_SKILL_FACTORIES.append(SteerVelocity)
+
+    reg = SkillRegistry(
+        auto_generate_doc=False,
+        allowed_skill_names=_MOCK_SKILL_NAMES if profile == "mock" else None,
+        soft_skill_names=set() if profile == "mock" else None,
+    )
+    reg.adapter_profile = profile
     for SkillClass in ALL_SKILL_FACTORIES:
         instance = SkillClass()
         rt = instance.robot_type  # list, e.g. ["UAV"] or ["UAV","UGV"] or []
         if not rt or robot_type in rt:
             reg.register_skill(instance)
-            count += 1
 
-    return reg, count
+    return reg, len(reg)
+
+
+def _refresh_robot_skill_profiles(adapter_name: str) -> None:
+    """Rebuild registries if the connected adapter differs from startup config."""
+    profile = _skill_profile_name(adapter_name)
+    if state.robot_registries and all(
+        getattr(registry, "adapter_profile", "default") == profile
+        for registry in state.robot_registries.values()
+    ):
+        return
+    world = state.world_model.get_world_state().get("robots", {}) if state.world_model else {}
+    if profile == "mock" and state.world_model:
+        for robot_id in world:
+            state.world_model.update_world_state({
+                "robots": {
+                    robot_id: {
+                        "sensor_status": {
+                            "camera": False,
+                            "lidar": False,
+                            "microphone": False,
+                        }
+                    }
+                }
+            })
+    rebuilt = {}
+    for robot_id, robot in world.items():
+        robot_type = str(robot.get("robot_type") or "UAV").upper()
+        rebuilt[robot_id] = _build_robot_registry(
+            robot_id,
+            robot_type,
+            adapter_name=adapter_name,
+        )[0]
+    state.robot_registries = rebuilt
+    if state.runtime:
+        state.runtime._robot_registries = rebuilt
+        state.runtime._executor._robot_registries = rebuilt
+    socketio.emit("skill_catalog", _get_skill_catalog())
+    state.push_log("info", f"Adapter skill profile applied: {profile}")
 
 
 def _configured_uav_count(default: int) -> int:
@@ -589,8 +677,21 @@ def _do_init():
         # ── 世界模型 ─────────────────────────────────────────────────────────
         state.world_model = WorldModel()
         robots_init = _initial_robot_specs()
+        startup_profile = _skill_profile_name()
         for rid, rtype, pos, bat in robots_init:
             state.world_model.register_robot(rid, rtype, initial_position=pos, battery=bat)
+            if startup_profile == "mock":
+                state.world_model.update_world_state({
+                    "robots": {
+                        rid: {
+                            "sensor_status": {
+                                "camera": False,
+                                "lidar": False,
+                                "microphone": False,
+                            }
+                        }
+                    }
+                })
         state.push_log("success", f"世界模型初始化 ({', '.join(r[0] for r in robots_init)})")
 
         # ── 每台机器人独立注册表 ─────────────────────────────────────────────
@@ -603,6 +704,17 @@ def _do_init():
 
         total = sum(len(r) for r in state.robot_registries.values())
         state.push_log("success", f"技能注册完成：{len(state.robot_registries)} 台机器人，共 {total} 个技能实例")
+        if startup_profile == "mock":
+            state.push_log(
+                "info",
+                "Mock 能力配置已启用：未连接相机、LiDAR、麦克风和 VLM，"
+                "相关感知技能已在初始化阶段隐藏",
+                {
+                    "intent": "skill_profile",
+                    "adapter": "mock",
+                    "hidden_skills": sorted(_MOCK_HIDDEN_SENSOR_SKILLS),
+                },
+            )
 
         # ── 记忆模块 ─────────────────────────────────────────────────────────
         state.episodic_memory = EpisodicMemory()
@@ -698,6 +810,8 @@ def _try_connect_adapter():
                 ok = init_adapter("px4", connection_str=os.getenv("PX4_MAVSDK_URL", "udp://:14540"), timeout=int(os.getenv("PX4_CONNECT_TIMEOUT", "60")))
 
             adapter = get_adapter()
+            if adapter is not None:
+                _refresh_robot_skill_profiles(getattr(adapter, "name", sim_adapter))
             if ok:
                 if sim_adapter == "mock":
                     seed_fleet = getattr(adapter, "seed_fleet", None)
@@ -1063,10 +1177,10 @@ def _synchronize_mock_fleet(count: int, positions=None) -> dict:
             "battery": float(current.get("battery", max(55.0, 92.0 - index * 3.0))),
             "status": current.get("status", "idle"),
             "in_air": bool(current.get("in_air", False)),
-            "sensor_status": current.get("sensor_status") or {
-                "camera": True,
-                "lidar": True,
-                "microphone": True,
+            "sensor_status": {
+                "camera": False,
+                "lidar": False,
+                "microphone": False,
             },
         })
         robots[robot_id] = current
@@ -1795,13 +1909,21 @@ def _build_skill_inventory_reply(message: str):
 
 def _get_system_status() -> dict:
     executing_robots = state.executing_robot_snapshot()
+    mission = state.mission_progress.snapshot()
+    mission_status = str(mission.get("status") or "idle")
+    mission_active = bool(mission.get("mission_id")) and mission_status not in {
+        "idle", "complete", "partial", "cancelled", "timeout",
+    }
     return {
         "initialized": state.initialized,
         "mode": state.mode,
-        "is_executing": state.is_executing or bool(executing_robots),
-        "ai_executing": state.is_executing,
+        "is_executing": state.is_executing or bool(executing_robots) or mission_active,
+        "ai_executing": state.is_executing or mission_active,
         "executing_robots": executing_robots,
         "current_robot": state.current_robot,
+        "mission_active": mission_active,
+        "mission_id": mission.get("mission_id", ""),
+        "mission_status": mission_status,
     }
 
 
@@ -2335,13 +2457,32 @@ def api_skills():
 
 # ── 软技能管理 API ────────────────────────────────────────────────────────────
 
+def _soft_skill_available_for_active_profile(name: str) -> bool:
+    """Return whether the current adapter profile exposes a document Skill."""
+    registries = list(state.robot_registries.values())
+    if registries:
+        return any(registry.allows_soft_skill(name) for registry in registries)
+    return _skill_profile_name() != "mock"
+
+
+def _soft_skill_profile_error():
+    return jsonify({
+        "ok": False,
+        "msg": "Document Skills are disabled for the active Mock adapter profile.",
+        "adapter_profile": "mock",
+    }), 409
+
 @app.route("/api/skills/soft", methods=["GET"])
 def api_soft_skills():
+    if not _soft_skill_available_for_active_profile("__soft_skill_catalog__"):
+        return jsonify({"ok": True, "skills": [], "count": 0})
     """返回所有软技能列表和摘要。"""
     from skills.soft_skill_manager import get_soft_skill_manager
     mgr = get_soft_skill_manager()
     skills = []
     for name in mgr.list_skills():
+        if not _soft_skill_available_for_active_profile(name):
+            continue
         info = mgr._cache.get(name, {})
         skills.append({
             "name": name,
@@ -2354,6 +2495,8 @@ def api_soft_skills():
 
 @app.route("/api/skills/soft/<name>", methods=["GET"])
 def api_soft_skill_detail(name):
+    if not _soft_skill_available_for_active_profile(name):
+        return _soft_skill_profile_error()
     """获取单个软技能的完整文档。"""
     from skills.soft_skill_manager import get_soft_skill_manager
     mgr = get_soft_skill_manager()
@@ -2373,6 +2516,8 @@ def api_create_soft_skill():
     content = data.get("content", "").strip()
     if not name or not content:
         return jsonify({"ok": False, "msg": "name 和 content 不能为空"}), 400
+    if not _soft_skill_available_for_active_profile(name):
+        return _soft_skill_profile_error()
     if mgr.skill_exists(name):
         return jsonify({"ok": False, "msg": f"软技能 '{name}' 已存在"}), 409
     path = mgr.create_skill(name, content)
@@ -2411,6 +2556,9 @@ def api_generate_soft_skill():
     from skills.soft_skill_manager import get_soft_skill_manager
     from skills.dynamic_skill_gen import generate_soft_skill_doc
     from llm_client import get_client
+
+    if not _soft_skill_available_for_active_profile("__generated_soft_skill__"):
+        return _soft_skill_profile_error()
 
     mgr = get_soft_skill_manager()
     data = request.get_json() or {}
@@ -2619,29 +2767,43 @@ def api_delete_provider(name):
     return jsonify({"ok": True, "name": name})
 
 
+def _set_operation_mode(new_mode: str, reason: str = "") -> dict:
+    """Apply one authoritative mode transition for REST and Socket.IO callers."""
+    if new_mode not in ("manual", "ai"):
+        return {"ok": False, "msg": "mode 必须是 manual 或 ai"}
+
+    with state._mode_lock:
+        previous = state.mode
+        state.mode = new_mode
+        if new_mode == "manual":
+            state._ai_stop_event.set()
+            _clear_mission_operating_bounds()
+        else:
+            state._ai_stop_event.clear()
+
+    socketio.emit("system_status", _get_system_status())
+    if previous != new_mode:
+        if new_mode == "manual":
+            state.push_log("info", "已切换到手动模式，UAV Agent 自主执行已停止")
+        else:
+            suffix = f"：{reason}" if reason else ""
+            state.push_log("info", f"已切换到自主模式，控制权归属各 UAV Agent{suffix}")
+    return {"ok": True, "mode": state.mode, "changed": previous != new_mode}
+
+
 @app.route("/api/mode", methods=["POST"])
 def api_set_mode():
     """切换 manual / ai 模式。"""
     data = request.get_json() or {}
-    new_mode = data.get("mode", "manual")
-    if new_mode not in ("manual", "ai"):
-        return jsonify({"ok": False, "msg": "mode 必须是 manual 或 ai"}), 400
+    result = _set_operation_mode(str(data.get("mode", "manual")))
+    return jsonify(result), (200 if result.get("ok") else 400)
 
-    if new_mode == state.mode:
-        return jsonify({"ok": True, "msg": f"已是 {new_mode} 模式"})
 
-    # 如果从 AI → Manual，停止 AI 线程
-    if state.mode == "ai" and new_mode == "manual":
-        state._ai_stop_event.set()
-        state.push_log("info", "已切换到手动模式，AI 规划已停止")
-
-    state.mode = new_mode
-    socketio.emit("system_status", _get_system_status())
-
-    if new_mode == "ai":
-        state.push_log("info", "已切换到 AI 模式，等待任务指令")
-
-    return jsonify({"ok": True, "mode": state.mode})
+@socketio.on("set_mode")
+def on_set_mode(data):
+    """Keep the mode change ordered with the following Socket.IO task event."""
+    result = _set_operation_mode(str((data or {}).get("mode", "manual")))
+    emit("mode_changed", result)
 
 
 @app.route("/api/logs", methods=["GET"])
@@ -3199,6 +3361,8 @@ def on_connect():
         time.sleep(0.05)
         socketio.emit("system_status", _get_system_status(), to=sid)
         socketio.emit("world_state", state.get_world_snapshot(), to=sid)
+        socketio.emit("uav_comm_links", {"mission_id": "", "links": state.agent_contexts.links()}, to=sid)
+        _emit_commander_progress(sid)
         if state.robot_registries:
             socketio.emit("skill_catalog", _get_skill_catalog(), to=sid)
         with state._log_lock:
@@ -3686,73 +3850,103 @@ def on_ai_task(data):
 
 # ── AI 对话聊天 ──────────────────────────────────────────────────────────────
 
-# 对话历史 (server 端维护, 每个 session 独立)
-_chat_histories: dict = {}  # {sid: [{"role": str, "content": str}]}
+# 每架 UAV 拥有独立的 LLM 历史和可审计消息流。
+def _get_uav_agent_snapshot():
+    if state.world_model:
+        robots = state.world_model.get_world_state().get("robots", {})
+        for robot_id in robots:
+            if str(robot_id).upper().startswith("UAV"):
+                state.agent_contexts.ensure(robot_id)
+    return state.agent_contexts.snapshot()
 
 
-@socketio.on("ai_chat")
-def on_ai_chat(data):
-    """
-    统一对话入口: LLM 自己决定是聊天还是执行任务。
-    不做硬编码意图识别, 让模型自主判断。
-    data: {"message": "..."}
-    """
-    if not state.initialized:
-        emit("ai_chat_reply", {"ok": False, "error": "系统未初始化"})
-        return
+def _emit_uav_agent_message(robot_id, sender, receiver, content, *, kind="dialogue", intent="CHAT", sid=None):
+    event = state.agent_contexts.record_message(
+        robot_id,
+        sender,
+        receiver,
+        content,
+        kind=kind,
+        intent=intent,
+    )
+    if sid:
+        socketio.emit("uav_agent_message", event, to=sid)
+    return event
 
-    message = data.get("message", "").strip()
-    if not message:
-        emit("ai_chat_reply", {"ok": False, "error": "消息不能为空"})
-        return
-    interaction_mode = str(data.get("mode") or "auto").strip().lower()
-    if interaction_mode not in {"auto", "chat"}:
-        interaction_mode = "auto"
 
-    sid = request.sid
-    from skills.cognitive_skills import AskUser
-    if AskUser._answer_event and not AskUser._answer_event.is_set():
-        AskUser.receive_answer(message)
-        state.push_log(
-            "info",
-            f"Operator answered pending question: {message[:80]}",
-            {"intent": "ask_user_answer"},
+def _emit_uav_agent_reply(robot_id, sid, reply, *, intent="CHAT", message="", ok=True, **extra):
+    payload = {
+        "ok": ok,
+        "intent": intent,
+        "reply": reply,
+        "message": message,
+        "robot_id": robot_id,
+        **extra,
+    }
+    socketio.emit("ai_chat_reply", payload, to=sid)
+    if reply:
+        _emit_uav_agent_message(
+            robot_id,
+            robot_id,
+            "Operator",
+            reply,
+            kind="agent",
+            intent=intent,
+            sid=sid,
         )
-        emit("ai_chat_reply", {
-            "ok": True,
-            "intent": "ANSWER",
-            "reply": f"Answer received: {message[:80]}",
-            "message": message,
-        })
-        return
 
-    inventory_reply = _build_skill_inventory_reply(message)
-    if inventory_reply:
-        history = _chat_histories.setdefault(sid, [])
-        history.append({"role": "user", "content": message})
-        history.append({"role": "assistant", "content": inventory_reply})
-        if len(history) > 40:
-            _chat_histories[sid] = history[-40:]
-        emit("ai_chat_reply", {
-            "ok": True,
-            "intent": "CHAT",
-            "reply": inventory_reply,
-            "message": message,
-            "source": "live_skill_catalog",
-        })
-        return
 
-    def _reply():
-        from brain.chat_mode import unified_chat
-        from llm_client import get_client
+def _active_uav_states():
+    if not state.world_model:
+        return {}
+    robots = state.world_model.get_world_state().get("robots", {})
+    return {
+        robot_id: robot
+        for robot_id, robot in robots.items()
+        if str(robot_id).upper().startswith("UAV_") and robot_id in state.robot_registries
+    }
 
-        if sid not in _chat_histories:
-            _chat_histories[sid] = []
-        history = _chat_histories[sid]
 
+def _emit_comm_links(sid, mission_id=""):
+    socketio.emit("uav_comm_links", {
+        "mission_id": mission_id,
+        "links": state.agent_contexts.links(),
+    }, to=sid)
+
+
+def _send_agent_network_message(source, target, content, sid, *, mission_id="", kind="peer", inject=True):
+    source = normalize_robot_id(source)
+    target = normalize_robot_id(target)
+    if source.startswith("UAV_") and target.startswith("UAV_"):
+        state.agent_contexts.touch_link(source, target, mission_id)
+        _emit_comm_links(sid, mission_id)
+    event = _emit_uav_agent_message(
+        target,
+        source,
+        target,
+        content,
+        kind=kind,
+        intent="COMM",
+        sid=sid,
+    )
+    if inject:
+        state.agent_contexts.append_history(
+            target,
+            "user",
+            f"[Message from {source}] {content}",
+        )
+    return event
+
+
+def _generate_uav_response(robot_id, message, *, conversation_only=False):
+    from brain.chat_mode import unified_chat
+    from llm_client import get_client
+
+    robot_id = normalize_robot_id(robot_id)
+    with state.agent_contexts.conversation_lock(robot_id):
+        history = state.agent_contexts.history(robot_id)
         client = get_client(module="planner")
 
-        # 收集上下文: 感知摘要 + 世界状态 + 技能表
         perception_summary = ""
         try:
             from perception.daemon import get_daemon
@@ -3763,85 +3957,1147 @@ def on_ai_chat(data):
             pass
 
         world_state = state.world_model.get_world_state()
-        world_lines = []
-        for rid, rd in world_state.get("robots", {}).items():
-            pos = rd.get("position", [0, 0, 0])
-            world_lines.append(
-                f"{rid}: 位置={pos}, 电量={rd.get('battery', '?')}%, "
-                f"状态={rd.get('status', '?')}, 在空中={rd.get('in_air', '?')}"
-            )
-        world_state_str = "\n".join(world_lines) if world_lines else "(无)"
+        own_state = world_state.get("robots", {}).get(robot_id, {})
+        position = own_state.get("position", [0, 0, 0])
+        peers = [rid for rid in world_state.get("robots", {}) if rid != robot_id]
+        world_lines = [
+            f"我的编号={robot_id}",
+            f"我的位置={position}, 电量={own_state.get('battery', '?')}%, "
+            f"状态={own_state.get('status', '?')}, 在空中={own_state.get('in_air', '?')}",
+        ]
+        if peers:
+            world_lines.append(f"可通信智能体={', '.join(sorted(peers))}")
 
-        # 技能表
         skill_table = ""
-        reg = state.robot_registries.get(state.current_robot)
-        if reg:
+        registry = state.robot_registries.get(robot_id)
+        if registry:
             try:
                 from skills.skill_loader import build_skill_summary
-                skill_table = build_skill_summary(reg.get_skill_catalog())
+                skill_table = build_skill_summary(registry.get_skill_catalog())
             except Exception:
                 pass
 
-        # 尝试获取最近的相机视觉描述 (VLM)
         camera_description = ""
         try:
             from perception.daemon import get_daemon
             daemon = get_daemon()
             if daemon and daemon.is_running:
-                detailed = daemon.get_detailed_summary()
-                camera_description = detailed.get("vlm", "")
+                camera_description = daemon.get_detailed_summary().get("vlm", "")
         except Exception:
             pass
 
-        # 统一调用 LLM
         result = unified_chat(
             user_input=message,
             chat_history=history,
             llm_client=client,
             skill_table=skill_table,
             perception_summary=perception_summary,
-            world_state_str=world_state_str,
+            world_state_str="\n".join(world_lines),
             camera_description=camera_description,
-            conversation_only=interaction_mode == "chat",
+            conversation_only=conversation_only,
+            robot_id=robot_id,
+        )
+        state.agent_contexts.append_history(robot_id, "user", message)
+        state.agent_contexts.append_history(robot_id, "assistant", result["text"])
+        return result
+
+
+def _emit_execution_reply(robot_id, sid, reply, intent, task, reply_to):
+    if reply_to == "Operator":
+        _emit_uav_agent_reply(robot_id, sid, reply, intent=intent, message=task)
+
+
+def _active_comm_link_count():
+    return sum(link.get("status") == "active" for link in state.agent_contexts.links())
+
+
+def _emit_commander_progress(sid):
+    snapshot = state.mission_progress.snapshot(
+        state.world_model.get_world_state() if state.world_model else {},
+        _active_comm_link_count(),
+    )
+    socketio.emit("commander_progress", snapshot, to=sid)
+    return snapshot
+
+
+def _clear_mission_operating_bounds():
+    from adapters.adapter_manager import get_adapter
+
+    adapter = get_adapter()
+    clear_bounds = getattr(adapter, "clear_operating_bounds", None)
+    if callable(clear_bounds):
+        clear_bounds()
+
+
+def _configure_mission_operating_bounds(task_area, robot_ids):
+    from adapters.adapter_manager import get_adapter
+    from brain.pursuit_mission import normalize_area_bounds
+
+    area = normalize_area_bounds(task_area)
+    adapter = get_adapter()
+    clear_bounds = getattr(adapter, "clear_operating_bounds", None)
+    if callable(clear_bounds):
+        clear_bounds()
+    if not area:
+        return None
+    set_bounds = getattr(adapter, "set_operating_bounds", None)
+    if not callable(set_bounds):
+        raise RuntimeError(
+            f"Adapter {getattr(adapter, 'name', 'unknown')} cannot enforce a hard mission boundary."
+        )
+    enforced = set_bounds(area, robot_ids)
+    state.push_log(
+        "info",
+        (
+            "Hard mission boundary enabled: "
+            f"N=[{area['north_min']}, {area['north_max']}], "
+            f"E=[{area['east_min']}, {area['east_max']}]."
+        ),
+        {"intent": "mission_boundary", "task_area": area, "robot_ids": list(robot_ids)},
+    )
+    return enforced
+
+
+def _initialize_mission_scene(initialization, mission_id, sid):
+    from skills.scenario_skills import scene_reset_window
+
+    with scene_reset_window(mission_id):
+        for item in initialization:
+            robot_id = normalize_robot_id(item.get("robot_id"))
+            result = state.runtime.dispatch_skill({
+                "skill": "teleport_initialize",
+                "robot": robot_id,
+                "parameters": {
+                    "mission_id": mission_id,
+                    "position": item.get("position"),
+                    "in_air": True,
+                },
+            })
+            if not result.success:
+                raise RuntimeError(f"{robot_id} initialization failed: {result.error_msg}")
+            initialized_position = list(
+                (result.output or {}).get("position")
+                or item.get("position")
+                or [0.0, 0.0, -5.0]
+            )[:3]
+            state.world_model.update_world_state({
+                "robots": {
+                    robot_id: {
+                        "position": initialized_position,
+                        "in_air": True,
+                        "status": "airborne",
+                    }
+                }
+            })
+    socketio.emit("world_state", state.get_world_snapshot())
+    return _emit_commander_progress(sid)
+
+
+def _publish_commander_progress_report(mission_id, phase, sid):
+    try:
+        from brain.commander import build_progress_report
+        from llm_client import get_client
+
+        snapshot = _emit_commander_progress(sid)
+        if snapshot.get("mission_id") != mission_id:
+            return
+        report = build_progress_report(snapshot, get_client(module="planner"), phase)
+        updated = state.mission_progress.set_report(mission_id, phase, report)
+        if updated.get("latest_report") != report:
+            return
+        _emit_commander_progress(sid)
+        log_level = "success" if phase == "final" else "warn" if phase == "consensus" else "info"
+        log_label = "任务完成报告" if phase == "final" else "终止共识报告" if phase == "consensus" else "任务进度报告"
+        state.push_log(
+            log_level,
+            f"{log_label}: {report}",
+            {"intent": "mission_progress", "mission_id": mission_id, "phase": phase},
+        )
+        state.agent_contexts.append_history("COMMANDER", "assistant", report)
+        if phase == "final":
+            _clear_mission_operating_bounds()
+    except Exception:
+        logger.exception("Commander progress report failed: mission=%s phase=%s", mission_id, phase)
+
+
+def _schedule_commander_progress_report(mission_id, sid):
+    snapshot = _emit_commander_progress(sid)
+    agents = snapshot.get("agents") or []
+    phase = None
+    if snapshot.get("status") in {"complete", "partial", "timeout"}:
+        phase = "final"
+    elif snapshot.get("status") == "awaiting_consensus":
+        phase = "consensus"
+    elif agents and all(int(agent.get("decision_count") or 0) > 0 for agent in agents):
+        phase = "planning"
+    if phase and state.mission_progress.claim_report_phase(mission_id, phase):
+        threading.Thread(
+            target=_publish_commander_progress_report,
+            args=(mission_id, phase, sid),
+            daemon=True,
+        ).start()
+
+
+def _evaluate_uav_termination(robot_id, task, mission_id, execution):
+    """Collect one private UAV judgment against the predeclared end conditions."""
+    from brain.uav_agent_context import assess_termination
+    from llm_client import get_client
+
+    snapshot = state.mission_progress.snapshot(
+        state.world_model.get_world_state() if state.world_model else {},
+        _active_comm_link_count(),
+    )
+    own_state = _active_uav_states().get(robot_id, {})
+    try:
+        with state.agent_contexts.conversation_lock(robot_id):
+            history = state.agent_contexts.history(robot_id)
+            vote = assess_termination(
+                robot_id=robot_id,
+                assignment=task,
+                termination_conditions=snapshot.get("termination_conditions") or [],
+                execution_result=execution,
+                own_state=own_state,
+                history=history,
+                llm_client=get_client(module="planner"),
+            )
+            marker = "READY" if vote.get("ready_to_end") else "CONTINUE"
+            state.agent_contexts.append_history(
+                robot_id,
+                "assistant",
+                f"[Termination vote: {marker}] {vote.get('reason', '')}",
+            )
+            return vote
+    except Exception as exc:
+        logger.exception("Termination assessment failed for %s", robot_id)
+        return {
+            "ready_to_end": False,
+            "reason": f"Termination assessment failed: {exc}",
+            "evidence": [],
+            "unmet_conditions": [
+                item.get("description", "")
+                for item in snapshot.get("termination_conditions") or []
+            ],
+        }
+
+
+def _mission_is_active(mission_id: str) -> bool:
+    snapshot = state.mission_progress.snapshot()
+    return (
+        snapshot.get("mission_id") == mission_id
+        and snapshot.get("status")
+        not in {"idle", "complete", "partial", "cancelled", "timeout"}
+    )
+
+
+def _pursuit_adapter_state(adapter, participants) -> tuple[dict, dict]:
+    get_snapshot = getattr(adapter, "get_robot_snapshot", None)
+    fleet = get_snapshot() if callable(get_snapshot) else {}
+    world = _active_uav_states()
+    positions, velocities = {}, {}
+    for robot_id in participants:
+        telemetry = fleet.get(robot_id, {})
+        robot = world.get(robot_id, {})
+        positions[robot_id] = list(
+            telemetry.get("position") or robot.get("position") or [0.0, 0.0, -8.0]
+        )[:3]
+        velocities[robot_id] = list(telemetry.get("velocity") or [0.0, 0.0, 0.0])[:3]
+    return positions, velocities
+
+
+def _sync_pursuit_world(adapter, participants) -> tuple[dict, dict]:
+    positions, velocities = _pursuit_adapter_state(adapter, participants)
+    if state.world_model:
+        state.world_model.update_world_state({
+            "robots": {
+                robot_id: {
+                    "position": [round(float(value), 2) for value in positions[robot_id]],
+                    "velocity": [round(float(value), 2) for value in velocities[robot_id]],
+                    "in_air": True,
+                    "status": "executing" if _mission_is_active(state.mission_progress.mission_id()) else "airborne",
+                }
+                for robot_id in participants
+            }
+        })
+    socketio.emit("world_state", state.get_world_snapshot())
+    return positions, velocities
+
+
+def _decide_pursuit_motion(robot_id, observation, scenario, previous_direction, round_index):
+    from brain.pursuit_mission import motion_decision_prompt, parse_motion_decision
+    from llm_client import get_client
+
+    prompt = motion_decision_prompt(robot_id, observation, scenario, previous_direction)
+    try:
+        with state.agent_contexts.conversation_lock(robot_id):
+            history = state.agent_contexts.history(robot_id)
+            messages = [{
+                "role": "system",
+                "content": (
+                    f"You are {robot_id}. You decide motion only for your own UAV from local state. "
+                    "Peer messages from earlier rounds are part of your private context."
+                ),
+            }]
+            messages.extend(
+                {"role": item["role"], "content": item["content"]}
+                for item in history[-10:]
+                if item.get("role") in {"user", "assistant"} and item.get("content")
+            )
+            messages.append({"role": "user", "content": prompt})
+            raw = get_client(module="planner").chat(
+                messages,
+                temperature=0.35,
+                max_tokens=500,
+            )
+            state.agent_contexts.append_history(
+                robot_id,
+                "user",
+                f"[Pursuit world round {round_index}] Local state received; choose the next direction.",
+            )
+            state.agent_contexts.append_history(robot_id, "assistant", raw)
+    except Exception as exc:
+        logger.warning("Pursuit decision fallback for %s: %s", robot_id, exc)
+        raw = ""
+    return parse_motion_decision(raw, observation, scenario)
+
+
+def _run_pursuit_mission(assignments, scenario, sid, mission_id):
+    """Run synchronized local-agent pursuit rounds with persistent Mock velocities."""
+    from adapters.adapter_manager import get_adapter
+    from brain.pursuit_mission import (
+        build_local_observation,
+        direction_changed,
+        evaluate_pursuit,
+        parse_motion_decision,
+        pursuit_links,
+    )
+
+    participants = [normalize_robot_id(item) for item in scenario.get("participants") or []]
+    assignment_by_robot = {
+        normalize_robot_id(item.get("robot_id")): item
+        for item in assignments or []
+        if item.get("robot_id")
+    }
+    adapter = get_adapter()
+    if not participants or adapter is None or not callable(getattr(adapter, "set_velocity_ned_for", None)):
+        state.mission_progress.timeout(
+            mission_id,
+            "The pursuit runtime requires the Mock adapter persistent-velocity interface.",
+        )
+        _emit_commander_progress(sid)
+        socketio.emit("system_status", _get_system_status())
+        return
+
+    reserved, busy = state.try_begin_robot_executions(participants)
+    if not reserved:
+        state.mission_progress.timeout(
+            mission_id,
+            f"Pursuit could not start because these UAVs are busy: {', '.join(busy)}",
+        )
+        _emit_commander_progress(sid)
+        socketio.emit("system_status", _get_system_status())
+        return
+
+    previous_directions = {}
+    try:
+        for robot_id in participants:
+            assignment = assignment_by_robot.get(robot_id, {})
+            task = str(assignment.get("task") or "Pursuit mission")
+            state.agent_contexts.update_task(robot_id, task, "planning")
+            _send_agent_network_message(
+                "COMMANDER",
+                robot_id,
+                task,
+                sid,
+                mission_id=mission_id,
+                kind="assignment",
+                inject=False,
+            )
+        state.mission_progress.set_status(mission_id, "executing")
+        socketio.emit("system_status", _get_system_status())
+
+        max_rounds = int(scenario.get("max_rounds", 16))
+        decision_interval = float(scenario.get("decision_interval_s", 1.5))
+        realtime_factor = max(0.1, float(getattr(adapter, "realtime_factor", 1.0)))
+        for round_index in range(1, max_rounds + 1):
+            if state._ai_stop_event.is_set() or state.mode != "ai" or not _mission_is_active(mission_id):
+                return
+
+            positions, velocities = _sync_pursuit_world(adapter, participants)
+            current_progress = state.mission_progress.snapshot()
+            outcome = evaluate_pursuit(
+                positions,
+                scenario,
+                round_index=round_index - 1,
+                world_step=current_progress.get("world_step", 0),
+            )
+            if outcome.get("status") == "complete":
+                for robot_id in participants:
+                    state.mission_progress.record_result(
+                        mission_id, robot_id, True, 0.0, outcome.get("reason", "Capture reached.")
+                    )
+                    state.mission_progress.record_termination_vote(
+                        mission_id,
+                        robot_id,
+                        True,
+                        outcome.get("reason", "Capture reached."),
+                        [str(outcome.get("evidence") or {})],
+                        [],
+                    )
+                break
+
+            local_pairs = pursuit_links(
+                positions,
+                participants,
+                scenario.get("communication_range_m", 55.0),
+            )
+            links = state.agent_contexts.set_local_links(local_pairs, mission_id)
+            socketio.emit("uav_comm_links", {"mission_id": mission_id, "links": links}, to=sid)
+            observations = {
+                robot_id: build_local_observation(robot_id, positions, velocities, scenario)
+                for robot_id in participants
+            }
+            for robot_id in participants:
+                state.mission_progress.record_decision(mission_id, robot_id)
+                state.agent_contexts.update_task(
+                    robot_id,
+                    assignment_by_robot.get(robot_id, {}).get("task", "Pursuit mission"),
+                    "deciding",
+                )
+            _emit_commander_progress(sid)
+
+            decisions = {}
+            with ThreadPoolExecutor(max_workers=min(len(participants), 6)) as pool:
+                futures = {
+                    pool.submit(
+                        _decide_pursuit_motion,
+                        robot_id,
+                        observations[robot_id],
+                        scenario,
+                        previous_directions.get(robot_id),
+                        round_index,
+                    ): robot_id
+                    for robot_id in participants
+                }
+                for future in as_completed(futures):
+                    robot_id = futures[future]
+                    try:
+                        decisions[robot_id] = future.result()
+                    except Exception as exc:
+                        logger.exception("Pursuit agent decision failed: robot=%s", robot_id)
+                        decisions[robot_id] = parse_motion_decision(
+                            "", observations[robot_id], scenario
+                        )
+
+            round_success = {}
+            for robot_id in participants:
+                decision = decisions[robot_id]
+                direction = decision["direction"]
+                changed = direction_changed(previous_directions.get(robot_id), direction)
+                if changed:
+                    result = UAVAgentRuntime(state.runtime, robot_id).dispatch_skill({
+                        "robot": robot_id,
+                        "skill": "steer_velocity",
+                        "parameters": {
+                            "direction": direction,
+                            "speed_mps": decision["speed_mps"],
+                        },
+                    })
+                    round_success[robot_id] = bool(result.success)
+                    if result.success:
+                        previous_directions[robot_id] = direction
+                else:
+                    round_success[robot_id] = True
+
+                planned_distance = decision["speed_mps"] * decision_interval
+                state.mission_progress.record_plan(mission_id, robot_id, planned_distance)
+                state.agent_contexts.update_task(
+                    robot_id,
+                    assignment_by_robot.get(robot_id, {}).get("task", "Pursuit mission"),
+                    "executing",
+                )
+                intent = (
+                    f"Round {round_index}: {decision['message']} Direction={direction[:2]}, "
+                    f"speed={decision['speed_mps']:.1f} m/s"
+                    + ("; maintaining previous velocity." if not changed else "; steering updated.")
+                )
+                _send_agent_network_message(
+                    robot_id,
+                    "COMMANDER",
+                    intent,
+                    sid,
+                    mission_id=mission_id,
+                    kind="agent",
+                    inject=True,
+                )
+                for peer in observations[robot_id].get("communicable_peers") or []:
+                    _send_agent_network_message(
+                        robot_id,
+                        peer,
+                        intent,
+                        sid,
+                        mission_id=mission_id,
+                        kind="peer",
+                        inject=True,
+                    )
+
+            wall_deadline = time.monotonic() + decision_interval / realtime_factor
+            while time.monotonic() < wall_deadline:
+                if state._ai_stop_event.is_set() or state.mode != "ai" or not _mission_is_active(mission_id):
+                    return
+                time.sleep(min(0.08, max(0.0, wall_deadline - time.monotonic())))
+
+            next_positions, _next_velocities = _sync_pursuit_world(adapter, participants)
+            progress = state.mission_progress.snapshot()
+            outcome = evaluate_pursuit(
+                next_positions,
+                scenario,
+                round_index=round_index,
+                world_step=progress.get("world_step", 0),
+            )
+            evidence = outcome.get("evidence") or {}
+            state.mission_progress.record_round(mission_id, round_index, evidence)
+            for robot_id in participants:
+                moved = math.dist(positions[robot_id], next_positions[robot_id])
+                state.mission_progress.record_result(
+                    mission_id,
+                    robot_id,
+                    round_success.get(robot_id, False),
+                    moved,
+                    (
+                        f"World round {round_index}: moved {moved:.1f} m; "
+                        f"closest capture distance {evidence.get('closest_distance_m', '?')} m."
+                    ),
+                )
+
+            if outcome.get("status") == "complete":
+                for robot_id in participants:
+                    state.mission_progress.record_termination_vote(
+                        mission_id,
+                        robot_id,
+                        True,
+                        outcome.get("reason", "Capture condition reached."),
+                        [str(evidence)],
+                        [],
+                    )
+                    state.agent_contexts.update_task(
+                        robot_id,
+                        assignment_by_robot.get(robot_id, {}).get("task", "Pursuit mission"),
+                        "ready",
+                    )
+            elif outcome.get("status") == "timeout":
+                state.mission_progress.timeout(
+                    mission_id,
+                    outcome.get("reason", "Pursuit world-step limit reached."),
+                    evidence,
+                )
+                for robot_id in participants:
+                    state.agent_contexts.update_task(
+                        robot_id,
+                        assignment_by_robot.get(robot_id, {}).get("task", "Pursuit mission"),
+                        "timeout",
+                    )
+            else:
+                for robot_id in participants:
+                    state.mission_progress.record_termination_vote(
+                        mission_id,
+                        robot_id,
+                        False,
+                        (
+                            f"Capture distance is {evidence.get('closest_distance_m', '?')} m; "
+                            f"continue toward <= {scenario.get('capture_radius_m', 5.0)} m."
+                        ),
+                        [str(evidence)],
+                        ["Capture distance has not been reached."],
+                    )
+
+            state.push_log(
+                "success" if outcome.get("status") == "complete" else "warn" if outcome.get("status") == "timeout" else "info",
+                (
+                    f"Pursuit round {round_index}/{max_rounds}: closest distance "
+                    f"{evidence.get('closest_distance_m', '?')} m; status={outcome.get('status')}."
+                ),
+                {
+                    "intent": "pursuit_progress",
+                    "mission_id": mission_id,
+                    "round_index": round_index,
+                    "world_step": state.mission_progress.snapshot().get("world_step", 0),
+                    **evidence,
+                },
+            )
+            _emit_commander_progress(sid)
+            _schedule_commander_progress_report(mission_id, sid)
+            socketio.emit("system_status", _get_system_status())
+            if outcome.get("status") in {"complete", "timeout"}:
+                break
+
+        final = state.mission_progress.snapshot()
+        if final.get("status") not in {"complete", "partial", "cancelled", "timeout"}:
+            positions, _ = _pursuit_adapter_state(adapter, participants)
+            outcome = evaluate_pursuit(
+                positions,
+                scenario,
+                round_index=max_rounds,
+                world_step=final.get("world_step", 0),
+            )
+            state.mission_progress.timeout(
+                mission_id,
+                outcome.get("reason", "Pursuit decision limit reached."),
+                outcome.get("evidence") or {},
+            )
+    except Exception as exc:
+        logger.exception("Pursuit mission failed: mission=%s", mission_id)
+        if _mission_is_active(mission_id):
+            state.mission_progress.timeout(
+                mission_id,
+                f"Pursuit runtime stopped after an execution error: {exc}",
+            )
+    finally:
+        _stop_all_adapter_motion(participants)
+        state.end_robot_executions(participants)
+        links = state.agent_contexts.set_local_links([], mission_id)
+        socketio.emit("uav_comm_links", {"mission_id": mission_id, "links": links}, to=sid)
+        _sync_pursuit_world(adapter, participants)
+        _emit_commander_progress(sid)
+        _schedule_commander_progress_report(mission_id, sid)
+        socketio.emit("system_status", _get_system_status())
+
+
+def _run_uav_agent_assignment(assignment, sid, mission_id):
+    """Let one UAV repeatedly decide and act until it votes READY or pauses."""
+    robot_id = normalize_robot_id(assignment.get("robot_id"))
+    task = str(assignment.get("task") or "").strip()
+    peers = [normalize_robot_id(item) for item in assignment.get("coordination_peers") or []]
+    if not task or robot_id not in _active_uav_states():
+        return
+
+    state.agent_contexts.update_task(robot_id, task, "planning")
+    _send_agent_network_message(
+        "COMMANDER",
+        robot_id,
+        task,
+        sid,
+        mission_id=mission_id,
+        kind="assignment",
+        inject=False,
+    )
+    for peer in peers:
+        if peer == robot_id or peer not in _active_uav_states():
+            continue
+        _send_agent_network_message(
+            robot_id,
+            peer,
+            f"Communication link established. My assigned subtask: {task}",
+            sid,
+            mission_id=mission_id,
+            kind="peer",
+            inject=True,
         )
 
-        # 更新历史
-        history.append({"role": "user", "content": message})
-        history.append({"role": "assistant", "content": result["text"]})
-        if len(history) > 40:
-            _chat_histories[sid] = history[-40:]
-
-        if result["type"] == "plan" and result["plan"] and interaction_mode != "chat" and state.mode == "ai":
-            # LLM 决定执行任务。若是本地单动作兜底计划，直接执行该
-            # plan，避免再进入依赖 LLM 的 AgentLoop 后因模型通道失败卡住。
-            socketio.emit("ai_chat_reply", {
-                "ok": True,
-                "intent": "TASK",
-                "reply": result["text"],
-                "message": message,
-            }, to=sid)
-
-            if result.get("fallback") == "single_action":
-                state.push_log("info", f"🤖 执行本地单动作兜底计划: {message}")
-                _execute_plan_from_chat(message, result["plan"], sid)
+    try:
+        mission_snapshot = state.mission_progress.snapshot()
+        agent_count = max(1, len(mission_snapshot.get("agents") or []))
+        max_world_steps = int(mission_snapshot.get("max_world_steps") or agent_count * 6)
+        derived_rounds = max(1, math.ceil(max_world_steps / agent_count))
+        configured_rounds = int(os.getenv("AEROWEAVER_AGENT_DECISION_ROUNDS", "0") or 0)
+        max_rounds = min(24, configured_rounds if configured_rounds > 0 else derived_rounds)
+        next_task = task
+        for agent_round in range(1, max_rounds + 1):
+            if (
+                state._ai_stop_event.is_set()
+                or state.mode != "ai"
+                or not _mission_is_active(mission_id)
+            ):
+                state.agent_contexts.update_task(robot_id, task, "cancelled")
+                return
             else:
-                state.push_log("info", f"🤖 启动自主任务: {message}")
-                # 启动 AgentLoop
-                _run_agent_loop(message, sid)
+                state.mission_progress.record_decision(mission_id, robot_id)
+                _emit_commander_progress(sid)
+                result = _generate_uav_response(robot_id, next_task)
+                if (
+                    state._ai_stop_event.is_set()
+                    or state.mode != "ai"
+                    or not _mission_is_active(mission_id)
+                ):
+                    state.agent_contexts.update_task(robot_id, task, "cancelled")
+                    return
+                _send_agent_network_message(
+                    robot_id,
+                    "COMMANDER",
+                    result["text"],
+                    sid,
+                    mission_id=mission_id,
+                    kind="agent",
+                    inject=True,
+                )
+                if result.get("type") == "plan" and result.get("plan"):
+                    current = _active_uav_states().get(robot_id, {}).get("position", [0, 0, -5])
+                    balanced_plan, planned_distance = balance_movement_plan(
+                        result["plan"],
+                        current,
+                        state.mission_progress.movement_budget(mission_id),
+                    )
+                    state.mission_progress.record_plan(mission_id, robot_id, planned_distance)
+                    _schedule_commander_progress_report(mission_id, sid)
+                    state.agent_contexts.update_task(robot_id, task, "executing")
+                    execution = _execute_plan_from_chat(
+                        task,
+                        balanced_plan,
+                        sid,
+                        robot_id,
+                        reply_to="COMMANDER",
+                    ) or {}
+                else:
+                    failure = f"{robot_id} did not produce an executable skill plan."
+                    execution = {"success": False, "moved_distance_m": 0.0, "summary": failure}
+                    _send_agent_network_message(
+                        robot_id,
+                        "COMMANDER",
+                        failure,
+                        sid,
+                        mission_id=mission_id,
+                        kind="result",
+                        inject=True,
+                    )
+
+                state.mission_progress.record_result(
+                    mission_id,
+                    robot_id,
+                    bool(execution.get("success")),
+                    execution.get("moved_distance_m", 0.0),
+                    execution.get("summary", ""),
+                )
+
+            if (
+                state._ai_stop_event.is_set()
+                or state.mode != "ai"
+                or not _mission_is_active(mission_id)
+            ):
+                state.agent_contexts.update_task(robot_id, task, "cancelled")
+                return
+            vote = _evaluate_uav_termination(robot_id, task, mission_id, execution)
+            state.mission_progress.record_termination_vote(
+                mission_id,
+                robot_id,
+                bool(vote.get("ready_to_end")),
+                vote.get("reason", ""),
+                vote.get("evidence") or [],
+                vote.get("unmet_conditions") or [],
+            )
+            marker = "READY" if vote.get("ready_to_end") else "CONTINUE"
+            vote_message = f"Termination vote {marker}: {vote.get('reason', '')}"
+            _send_agent_network_message(
+                robot_id,
+                "COMMANDER",
+                vote_message,
+                sid,
+                mission_id=mission_id,
+                kind="termination_vote",
+                inject=True,
+            )
+            state.push_log(
+                "success" if vote.get("ready_to_end") else "warn",
+                f"{robot_id} 终止投票 {marker}: {vote.get('reason', '')}",
+                {
+                    "intent": "termination_vote",
+                    "mission_id": mission_id,
+                    "robot_id": robot_id,
+                    "ready_to_end": bool(vote.get("ready_to_end")),
+                    "agent_round": agent_round,
+                },
+            )
+            _emit_commander_progress(sid)
+            _schedule_commander_progress_report(mission_id, sid)
+            socketio.emit("system_status", _get_system_status())
+            if vote.get("ready_to_end"):
+                state.agent_contexts.update_task(robot_id, task, "ready")
+                return
+            if (
+                state._ai_stop_event.is_set()
+                or state.mode != "ai"
+                or not _mission_is_active(mission_id)
+            ):
+                return
+            if agent_round < max_rounds:
+                next_task = (
+                    f"Continue your original assignment: {task}\n"
+                    f"Your previous termination vote was CONTINUE because: {vote.get('reason', '')}\n"
+                    "Address the unmet conditions using only your own skills, then reassess."
+                )
+
+        state.agent_contexts.update_task(robot_id, task, "awaiting_consensus")
+        state.push_log(
+            "warn",
+            f"{robot_id} reached {max_rounds} decision rounds without a READY vote; mission remains open.",
+            {"intent": "consensus_wait", "mission_id": mission_id, "robot_id": robot_id},
+        )
+        _emit_commander_progress(sid)
+        _schedule_commander_progress_report(mission_id, sid)
+        snapshot = state.mission_progress.snapshot()
+        agents = snapshot.get("agents") or []
+        if (
+            _mission_is_active(mission_id)
+            and agents
+            and all(int(agent.get("decision_count") or 0) >= max_rounds for agent in agents)
+        ):
+            state.mission_progress.timeout(
+                mission_id,
+                f"Mission reached the configured limit of {snapshot.get('max_world_steps', max_world_steps)} agent world steps without satisfying all completion conditions.",
+                {"world_step": snapshot.get("world_step", 0), "max_world_steps": max_world_steps},
+            )
+            _emit_commander_progress(sid)
+            _schedule_commander_progress_report(mission_id, sid)
+            socketio.emit("system_status", _get_system_status())
+    except Exception as exc:
+        if state._ai_stop_event.is_set():
+            state.agent_contexts.update_task(robot_id, task, "cancelled")
+            return
+        logger.exception("UAV agent assignment failed for %s", robot_id)
+        state.agent_contexts.update_task(robot_id, task, "error")
+        state.mission_progress.record_result(mission_id, robot_id, False, 0.0, str(exc))
+        state.mission_progress.record_termination_vote(
+            mission_id,
+            robot_id,
+            False,
+            f"Agent execution failed: {exc}",
+            [],
+            ["Resolve the execution failure before ending the mission."],
+        )
+        _send_agent_network_message(
+            robot_id,
+            "COMMANDER",
+            f"Assignment failed: {exc}",
+            sid,
+            mission_id=mission_id,
+            kind="result",
+            inject=True,
+        )
+        _schedule_commander_progress_report(mission_id, sid)
+
+
+def _run_commander_input(message, display_message, interaction_mode, sid, task_area=None):
+    from brain.commander import handle_global_input
+    from llm_client import get_client
+
+    commander_id = "COMMANDER"
+    try:
+        inventory_reply = _build_skill_inventory_reply(message)
+        if inventory_reply:
+            result = {"type": "chat", "reply": inventory_reply, "assignments": []}
+            state.agent_contexts.append_history(commander_id, "user", message)
+            state.agent_contexts.append_history(commander_id, "assistant", inventory_reply)
         else:
-            # 纯对话
-            socketio.emit("ai_chat_reply", {
-                "ok": True,
-                "intent": "CHAT",
-                "reply": result["text"],
-                "message": message,
-            }, to=sid)
+            with state.agent_contexts.conversation_lock(commander_id):
+                history = state.agent_contexts.history(commander_id)
+                result = handle_global_input(
+                    message,
+                    history,
+                    get_client(module="planner"),
+                    _active_uav_states(),
+                    force_mission=interaction_mode == "mission",
+                    conversation_only=interaction_mode == "chat",
+                    task_area=task_area,
+                )
+                state.agent_contexts.append_history(commander_id, "user", message)
+                commander_reply = result.get("reply") or result.get("operator_report") or result.get("summary") or "Mission distributed."
+                state.agent_contexts.append_history(commander_id, "assistant", commander_reply)
 
-    t = threading.Thread(target=_reply, daemon=True)
-    t.start()
+        if result.get("type") == "chat":
+            _emit_uav_agent_reply(
+                commander_id,
+                sid,
+                result.get("reply", "Commander is ready."),
+                intent="CHAT",
+                message=display_message,
+            )
+            return
 
+        assignments = result.get("assignments") or []
+        active_mission = state.mission_progress.snapshot()
+        if (
+            (
+                active_mission.get("mission_id")
+                and active_mission.get("status") not in {"idle", "complete", "partial", "cancelled", "timeout"}
+            )
+            or state.executing_robot_snapshot()
+        ):
+            reply = "A global mission is already active. Stop the current mission before starting another one."
+            _emit_uav_agent_reply(
+                commander_id,
+                sid,
+                reply,
+                intent="BUSY",
+                message=display_message,
+            )
+            return
 
+        mission_id = f"mission-{int(time.time() * 1000)}-{secrets.token_hex(3)}"
+        state._ai_stop_event.clear()
+        _set_operation_mode("ai", "global mission accepted")
+        robot_ids = [item.get("robot_id") for item in assignments]
+        scenario = result.get("scenario") or {}
+        links = (
+            state.agent_contexts.set_local_links([], mission_id)
+            if scenario.get("type") == "pursuit"
+            else state.agent_contexts.establish_links(robot_ids, mission_id)
+        )
+        socketio.emit("uav_comm_links", {"mission_id": mission_id, "links": links}, to=sid)
 
+        commander_reply = result.get("operator_report") or result.get("summary") or "Mission distributed."
+        _configure_mission_operating_bounds(result.get("task_area"), robot_ids)
+        state.mission_progress.start(
+            mission_id=mission_id,
+            description=result.get("description") or display_message,
+            strategy=result.get("summary") or "",
+            assignments=assignments,
+            metrics=result.get("metrics") or [],
+            movement_budget_m=result.get("movement_budget_m", 15.0),
+            termination_conditions=result.get("termination_conditions") or [],
+            operator_report=commander_reply,
+            max_world_steps=result.get("max_world_steps", 0),
+            scenario=scenario,
+        )
+        _initialize_mission_scene(result.get("initialization") or [], mission_id, sid)
+        state.mission_progress.set_status(mission_id, "assigned")
+        _emit_commander_progress(sid)
+        socketio.emit("system_status", _get_system_status())
+        _emit_uav_agent_reply(
+            commander_id,
+            sid,
+            commander_reply,
+            intent="COMMAND",
+            message=display_message,
+            mission_id=mission_id,
+        )
+        state.push_log(
+            "info",
+            "任务开始: "
+            + str(result.get("description") or display_message)
+            + "\n终止条件: "
+            + "; ".join(
+                str(item.get("description") or "")
+                for item in result.get("termination_conditions") or []
+            )
+            + "\n初始报告: "
+            + commander_reply,
+            {
+                "intent": "mission_start",
+                "mission_id": mission_id,
+                "robot_ids": robot_ids,
+                "termination_conditions": result.get("termination_conditions") or [],
+            },
+        )
+        if scenario.get("type") == "pursuit":
+            threading.Thread(
+                target=_run_pursuit_mission,
+                args=(assignments, scenario, sid, mission_id),
+                daemon=True,
+                name=f"pursuit-{mission_id}",
+            ).start()
+        else:
+            for assignment in assignments:
+                threading.Thread(
+                    target=_run_uav_agent_assignment,
+                    args=(assignment, sid, mission_id),
+                    daemon=True,
+                ).start()
+    except Exception as exc:
+        logger.exception("Commander input failed")
+        _emit_uav_agent_reply(
+            commander_id,
+            sid,
+            f"Commander failed to process the global task: {exc}",
+            intent="ERROR",
+            message=display_message,
+        )
+
+@socketio.on("ai_chat")
+def on_ai_chat(data):
+    """Route one operator message to one independently stateful UAV agent."""
+    if not state.initialized:
+        emit("ai_chat_reply", {"ok": False, "error": "系统未初始化"})
+        return
+
+    data = data or {}
+    message = str(data.get("message") or "").strip()
+    display_message = str(data.get("display_message") or message).strip()
+    task_area = data.get("task_area")
+    if not message:
+        emit("ai_chat_reply", {"ok": False, "error": "消息不能为空"})
+        return
+
+    interaction_mode = str(data.get("mode") or "auto").strip().lower()
+    if interaction_mode not in {"auto", "chat", "mission"}:
+        interaction_mode = "auto"
+
+    sid = request.sid
+    robot_id = normalize_robot_id(data.get("robot_id") or "COMMANDER")
+    if robot_id == "COMMANDER":
+        logger.info("Global input received: mode=%s sid=%s", interaction_mode, sid)
+        state.agent_contexts.ensure(robot_id)
+        _emit_uav_agent_message(
+            robot_id,
+            "Operator",
+            robot_id,
+            display_message,
+            kind="operator",
+            intent="TASK" if interaction_mode != "chat" else "CHAT",
+            sid=sid,
+        )
+        threading.Thread(
+            target=_run_commander_input,
+            args=(message, display_message, interaction_mode, sid, task_area),
+            daemon=True,
+        ).start()
+        return
+
+    robots = state.world_model.get_world_state().get("robots", {})
+    if robot_id not in robots or robot_id not in state.robot_registries:
+        emit("ai_chat_reply", {
+            "ok": False,
+            "error": f"Agent {robot_id} 未注册",
+            "robot_id": robot_id,
+        })
+        return
+
+    logger.info("Agent message received: robot=%s mode=%s sid=%s", robot_id, interaction_mode, sid)
+    state.agent_contexts.ensure(robot_id)
+    _emit_uav_agent_message(
+        robot_id,
+        "Operator",
+        robot_id,
+        display_message,
+        kind="operator",
+        intent="TASK" if interaction_mode == "auto" else "CHAT",
+        sid=sid,
+    )
+
+    from skills.cognitive_skills import AskUser
+    if AskUser._answer_event and not AskUser._answer_event.is_set():
+        AskUser.receive_answer(message)
+        state.agent_contexts.append_history(robot_id, "user", message)
+        answer_reply = f"Answer received: {display_message[:80]}"
+        state.agent_contexts.append_history(robot_id, "assistant", answer_reply)
+        state.push_log(
+            "info",
+            f"Operator answered pending question for {robot_id}: {display_message[:80]}",
+            {"intent": "ask_user_answer", "robot_id": robot_id},
+        )
+        _emit_uav_agent_reply(
+            robot_id,
+            sid,
+            answer_reply,
+            intent="ANSWER",
+            message=display_message,
+        )
+        return
+
+    inventory_reply = _build_skill_inventory_reply(message)
+    if inventory_reply:
+        state.agent_contexts.append_history(robot_id, "user", message)
+        state.agent_contexts.append_history(robot_id, "assistant", inventory_reply)
+        _emit_uav_agent_reply(
+            robot_id,
+            sid,
+            inventory_reply,
+            intent="CHAT",
+            message=display_message,
+            source="live_skill_catalog",
+        )
+        return
+
+    def _reply():
+        from brain.chat_mode import unified_chat
+        from llm_client import get_client
+
+        logger.info("Agent reply started: robot=%s", robot_id)
+        with state.agent_contexts.conversation_lock(robot_id):
+            history = state.agent_contexts.history(robot_id)
+            client = get_client(module="planner")
+
+            perception_summary = ""
+            try:
+                from perception.daemon import get_daemon
+                daemon = get_daemon()
+                if daemon and daemon.is_running:
+                    perception_summary = daemon.get_summary()
+            except ImportError:
+                pass
+
+            world_state = state.world_model.get_world_state()
+            own_state = world_state.get("robots", {}).get(robot_id, {})
+            position = own_state.get("position", [0, 0, 0])
+            world_lines = [
+                f"我的编号={robot_id}",
+                f"我的位置={position}, 电量={own_state.get('battery', '?')}%, "
+                f"状态={own_state.get('status', '?')}, 在空中={own_state.get('in_air', '?')}",
+            ]
+            peers = [rid for rid in world_state.get("robots", {}) if rid != robot_id]
+            if peers:
+                world_lines.append(f"其他已注册智能体={', '.join(sorted(peers))}")
+            world_state_str = "\n".join(world_lines)
+
+            skill_table = ""
+            registry = state.robot_registries.get(robot_id)
+            if registry:
+                try:
+                    from skills.skill_loader import build_skill_summary
+                    skill_table = build_skill_summary(registry.get_skill_catalog())
+                except Exception:
+                    pass
+
+            camera_description = ""
+            try:
+                from perception.daemon import get_daemon
+                daemon = get_daemon()
+                if daemon and daemon.is_running:
+                    detailed = daemon.get_detailed_summary()
+                    camera_description = detailed.get("vlm", "")
+            except Exception:
+                pass
+
+            result = unified_chat(
+                user_input=message,
+                chat_history=history,
+                llm_client=client,
+                skill_table=skill_table,
+                perception_summary=perception_summary,
+                world_state_str=world_state_str,
+                camera_description=camera_description,
+                conversation_only=interaction_mode == "chat",
+                robot_id=robot_id,
+            )
+
+            state.agent_contexts.append_history(robot_id, "user", message)
+            state.agent_contexts.append_history(robot_id, "assistant", result["text"])
+            logger.info("Agent model reply ready: robot=%s type=%s", robot_id, result.get("type"))
+
+        if result["type"] == "plan" and result["plan"] and interaction_mode != "chat":
+            _set_operation_mode("ai", f"{robot_id} accepted an operator task")
+            state.agent_contexts.update_task(robot_id, message, "executing")
+            _emit_uav_agent_reply(
+                robot_id,
+                sid,
+                result["text"],
+                intent="TASK",
+                message=display_message,
+            )
+            state.push_log("info", f"{robot_id} 开始执行独立 Agent 计划: {display_message}")
+            threading.Thread(
+                target=_execute_plan_from_chat,
+                args=(message, result["plan"], sid, robot_id),
+                daemon=True,
+            ).start()
+        else:
+            state.agent_contexts.update_task(robot_id, "", "idle")
+            _emit_uav_agent_reply(
+                robot_id,
+                sid,
+                result["text"],
+                intent="CHAT",
+                message=display_message,
+            )
+
+    threading.Thread(target=_reply, daemon=True).start()
 
 def _generate_patrol_report(task, summary, final_result, success):
     """生成 HTML 巡检报告，保存到 static/reports/ 并通知前端。"""
@@ -4078,21 +5334,25 @@ def _run_agent_loop(goal, sid):
         socketio.emit("system_status", _get_system_status())
 
 
-def _execute_plan_from_chat(task, steps, sid):
-    """
-    从对话中触发的任务执行。
-    复用 ai_task 的逐步执行 + 重规划逻辑。
-    """
-    if state.is_executing:
-        socketio.emit("ai_chat_reply", {
-            "ok": True, "intent": "CHAT",
-            "reply": "我正在执行另一个任务, 请等我完成。",
-            "message": task,
-        }, to=sid)
-        return
+def _execute_plan_from_chat(task, steps, sid, robot_id=None, reply_to="Operator"):
+    """Execute one UAV agent's physical plan without blocking other UAVs."""
+    robot_id = normalize_robot_id(robot_id or state.current_robot)
+    if robot_id == "COMMANDER":
+        reply = "COMMANDER has no physical control authority; assign the task to a UAV agent."
+        _emit_execution_reply(robot_id, sid, reply, "DENIED", task, reply_to)
+        return {"success": False, "moved_distance_m": 0.0, "summary": reply}
+    steps = [
+        {**step, "robot": robot_id}
+        for step in (steps or [])
+        if isinstance(step, dict)
+    ]
+    reserved, busy = state.try_begin_robot_executions([robot_id])
+    if not reserved:
+        reply = f"{robot_id} 正在执行另一项任务，请稍后重试。"
+        _emit_execution_reply(robot_id, sid, reply, "BUSY", task, reply_to)
+        return {"success": False, "moved_distance_m": 0.0, "summary": reply}
 
-    state.is_executing = True
-    state._ai_stop_event.clear()
+    agent_runtime = UAVAgentRuntime(state.runtime, robot_id)
     socketio.emit("system_status", _get_system_status())
 
     try:
@@ -4101,6 +5361,28 @@ def _execute_plan_from_chat(task, steps, sid):
         replan_count = 0
         all_step_results = []
         final_success = False
+        def _movement_distance(results):
+            total_distance = 0.0
+            for executed_step, step_result in results:
+                if executed_step.get("skill") not in {"fly_to", "fly_relative"}:
+                    continue
+                parameters = dict(executed_step.get("parameters") or {})
+                commanded_distance = parameters.get("movement_segment_m")
+                if commanded_distance is not None:
+                    try:
+                        if bool(getattr(step_result, "success", False)):
+                            total_distance += max(0.0, float(commanded_distance))
+                    except (TypeError, ValueError):
+                        pass
+                    continue
+                output = dict(getattr(step_result, "output", {}) or {})
+                distance = output.get("distance_traveled", output.get("distance", 0.0))
+                try:
+                    total_distance += max(0.0, float(distance or 0.0))
+                except (TypeError, ValueError):
+                    pass
+            return total_distance
+
 
         while replan_count <= MAX_REPLANS:
             state.push_log("info", f"🚀 执行 {len(steps)} 步" + (f" (重规划第{replan_count}次)" if replan_count > 0 else ""))
@@ -4123,7 +5405,7 @@ def _execute_plan_from_chat(task, steps, sid):
                     "skill": skill_name,
                 })
 
-                result = state.runtime.dispatch_skill(step_data)
+                result = agent_runtime.dispatch_skill(step_data)
                 all_step_results.append((step_data, result))
 
                 robot_id = step_data.get("robot", state.current_robot)
@@ -4163,7 +5445,7 @@ def _execute_plan_from_chat(task, steps, sid):
                 replan_msg = f"刚才执行任务\"{task}\"时, 出了问题:\n{history_str}\n\n请根据当前状态重新规划。已成功的步骤不需要重复。"
 
                 skill_table = ""
-                reg = state.robot_registries.get(state.current_robot)
+                reg = state.robot_registries.get(robot_id)
                 if reg:
                     try:
                         from skills.skill_loader import build_skill_summary
@@ -4171,16 +5453,36 @@ def _execute_plan_from_chat(task, steps, sid):
                     except Exception:
                         pass
 
+                mission_id = state.mission_progress.mission_id()
+                if reply_to == "COMMANDER" and mission_id:
+                    state.mission_progress.record_decision(mission_id, robot_id)
+                    _emit_commander_progress(sid)
+
                 replan_result = unified_chat(
                     user_input=replan_msg,
                     chat_history=[],
                     llm_client=client,
                     skill_table=skill_table,
                     world_state_str="\n".join(w_lines),
+                    robot_id=robot_id,
                 )
 
                 if replan_result["type"] == "plan" and replan_result["plan"]:
                     steps = replan_result["plan"]
+                    if reply_to == "COMMANDER" and mission_id:
+                        current = world_state.get("robots", {}).get(robot_id, {}).get("position", [0, 0, -5])
+                        movement_budget = state.mission_progress.movement_budget(mission_id)
+                        remaining_budget = max(
+                            0.0, movement_budget - _movement_distance(all_step_results)
+                        )
+                        if remaining_budget > 0.05:
+                            steps, planned_distance = balance_movement_plan(
+                                steps, current, remaining_budget
+                            )
+                        else:
+                            steps = [step for step in steps if step.get("skill") not in {"fly_to", "fly_relative"}]
+                            planned_distance = 0.0
+                        state.mission_progress.record_plan(mission_id, robot_id, planned_distance)
                     state.push_log("info", f"📋 重规划: {len(steps)} 步 | {replan_result['text'][:60]}")
                     socketio.emit("ai_plan_result", {"ok": True, "task": task, "reasoning": f"[重规划] {replan_result['text']}", "steps": steps})
                 else:
@@ -4203,62 +5505,166 @@ def _execute_plan_from_chat(task, steps, sid):
             "completed_steps": total_completed, "total_steps": len(all_step_results),
             "replans": replan_count,
             "cost_time": sum(r.cost_time for _, r in all_step_results),
-            "step_results": [{"skill": sd.get("skill", "?"), "robot": sd.get("robot", state.current_robot), "success": r.success, "cost_time": r.cost_time, "error": r.error_msg if hasattr(r, "error_msg") else None} for sd, r in all_step_results],
+            "step_results": [{"skill": sd.get("skill", "?"), "robot": sd.get("robot", robot_id), "success": r.success, "cost_time": r.cost_time, "error": r.error_msg if hasattr(r, "error_msg") else None} for sd, r in all_step_results],
         })
 
         # 把执行结果也推送到对话
         result_msg = f"{'任务完成' if final_success else '任务未完成'}: {total_completed}/{len(all_step_results)} 步成功{replan_note}"
-        socketio.emit("ai_chat_reply", {"ok": True, "intent": "RESULT", "reply": result_msg, "message": task}, to=sid)
+        _emit_execution_reply(robot_id, sid, result_msg, "RESULT", task, reply_to)
         socketio.emit("world_state", state.get_world_snapshot())
         socketio.emit("skill_catalog", _get_skill_catalog())
+        moved_distance = _movement_distance(all_step_results)
+        return {
+            "success": final_success,
+            "moved_distance_m": round(moved_distance, 2),
+            "summary": (
+                f"{robot_id} executed its assigned motion and observation plan; "
+                f"actual travel {moved_distance:.1f} m."
+            ),
+        }
 
     except Exception as e:
         logger.exception("对话任务执行异常")
-        state.push_log("error", f"执行异常: {e}")
+        state.push_log("error", f"{robot_id} 执行异常: {e}")
+        _emit_execution_reply(robot_id, sid, f"任务执行异常: {e}", "ERROR", task, reply_to)
+        return {
+            "success": False,
+            "moved_distance_m": 0.0,
+            "summary": f"{robot_id} execution error: {e}",
+        }
     finally:
-        state.is_executing = False
+        final_agent_status = "cancelled" if state._ai_stop_event.is_set() else "idle"
+        state.agent_contexts.update_task(robot_id, task, final_agent_status)
+        state.end_robot_execution(robot_id)
         socketio.emit("system_status", _get_system_status())
 
 
-@socketio.on("stop_execution")
-def on_stop_execution():
-    """中止当前执行：通知 adapter 停止飞行 + 重置执行状态。"""
+def _stop_all_adapter_motion(robot_ids) -> list[str]:
+    """Interrupt scripted motion and brake every UAV in the active task."""
+    from adapters.adapter_manager import get_all_adapters, get_primary_adapter
+
+    adapters = []
+    seen = set()
+    for adapter in get_all_adapters():
+        if adapter is None or id(adapter) in seen:
+            continue
+        seen.add(id(adapter))
+        adapters.append(adapter)
+
+    stopped = []
+    for adapter in adapters:
+        request_stop = getattr(adapter, "request_stop", None)
+        if callable(request_stop):
+            try:
+                request_stop()
+            except Exception:
+                logger.exception("Adapter motion interrupt failed")
+
+    primary = get_primary_adapter()
+    stop_for = getattr(primary, "stop_velocity_for", None) if primary else None
+    if callable(stop_for):
+        for robot_id in robot_ids:
+            try:
+                result = stop_for(robot_id)
+                if getattr(result, "success", False):
+                    stopped.append(str(robot_id))
+            except Exception:
+                logger.exception("Per-UAV braking failed: robot=%s", robot_id)
+
+    for adapter in adapters:
+        if adapter is primary and callable(stop_for):
+            continue
+        stop_velocity = getattr(adapter, "stop_velocity", None)
+        if callable(stop_velocity):
+            try:
+                stop_velocity()
+            except Exception:
+                logger.exception("Adapter velocity stop failed")
+    return sorted(set(stopped))
+
+
+def _stop_current_task(reason="Operator stopped the current task.") -> dict:
+    """Cancel the active task and stop every UAV without changing control mode."""
+    plan_was_executing = bool(state.is_executing)
+    had_agent_loop = state._current_agent_loop is not None
+    mission = state.mission_progress.snapshot()
+    mission_id = str(mission.get("mission_id") or "")
+    mission_active = bool(mission_id) and mission.get("status") not in {
+        "idle", "complete", "partial", "cancelled", "timeout",
+    }
+    mission_robot_ids = [
+        str(agent.get("robot_id"))
+        for agent in mission.get("agents") or []
+        if agent.get("robot_id")
+    ]
+    executing_robot_ids = state.executing_robot_snapshot()
+    robot_ids = sorted(set(mission_robot_ids + executing_robot_ids))
+    if not robot_ids and (plan_was_executing or had_agent_loop):
+        robot_ids = [state.current_robot]
+
     state._ai_stop_event.set()
-
-    # 通知 adapter 立即停止飞行
-    try:
-        from adapters.adapter_manager import get_all_adapters
-        for adapter in get_all_adapters():
-            if adapter and hasattr(adapter, 'request_stop'):
-                adapter.request_stop()
-        logger.info("🛑 已向全部活动无人机发送飞行打断信号")
-    except Exception:
-        pass
-
-    # 强制重置执行状态
-    was_executing = state.is_executing or bool(state.executing_robot_snapshot())
+    stopped_robot_ids = _stop_all_adapter_motion(robot_ids)
+    _clear_mission_operating_bounds()
     state.is_executing = False
+    state._current_agent_loop = None
+
+    if mission_active:
+        state.mission_progress.cancel(mission_id, reason, cancelled_by="operator")
+        for robot_id in mission_robot_ids:
+            task = next(
+                (
+                    str(agent.get("task") or "")
+                    for agent in mission.get("agents") or []
+                    if str(agent.get("robot_id")) == robot_id
+                ),
+                "",
+            )
+            state.agent_contexts.update_task(robot_id, task, "cancelled")
+        state.agent_contexts.update_task("COMMANDER", mission.get("description", ""), "cancelled")
+        state.agent_contexts.establish_links([], mission_id)
+        socketio.emit("uav_comm_links", {"mission_id": mission_id, "links": []})
+        _emit_commander_progress(None)
+
+    socketio.emit("ai_thinking", {"phase": "idle", "detail": ""})
+    socketio.emit("ai_stream", {"token": "", "done": True})
+    socketio.emit("world_state", state.get_world_snapshot())
     socketio.emit("system_status", _get_system_status())
 
-    if was_executing:
-        state.push_log("warn", "⏹ 执行已打断，尝试悬停...")
-        # 后台让无人机悬停
-        def _hold():
-            try:
-                from adapters.adapter_manager import get_adapter
-                adapter = get_adapter()
-                if adapter and _adapter_connected(adapter) and adapter.is_in_air():
-                    result = adapter.hover(2.0)
-                    state.push_log("info", f"🔄 悬停中: {result.message}")
-                else:
-                    state.push_log("info", "无人机不在空中，无需悬停")
-            except Exception as e:
-                state.push_log("warn", f"悬停失败: {e}")
-        threading.Thread(target=_hold, daemon=True).start()
-    else:
-        state.push_log("info", "⏹ 当前无执行中的任务")
+    stopped = mission_active or bool(executing_robot_ids) or plan_was_executing or had_agent_loop
+    message = (
+        f"Current task stopped by the operator; {len(robot_ids)} UAV(s) were commanded to hold position."
+        if stopped
+        else "There is no active task to stop."
+    )
+    state.push_log(
+        "warn" if stopped else "info",
+        message,
+        {
+            "intent": "global_task_stop",
+            "mission_id": mission_id,
+            "robot_ids": robot_ids,
+            "braked_robot_ids": stopped_robot_ids,
+        },
+    )
+    return {
+        "ok": True,
+        "stopped": stopped,
+        "mission_id": mission_id,
+        "status": "cancelled" if mission_active else "idle",
+        "robot_ids": robot_ids,
+        "braked_robot_ids": stopped_robot_ids,
+        "message": message,
+    }
 
-    emit("system_status", _get_system_status())
+
+@socketio.on("stop_execution")
+def on_stop_execution(data=None):
+    """Stop the complete active task, including every assigned UAV."""
+    data = data or {}
+    result = _stop_current_task(
+        str(data.get("reason") or "Operator stopped the current task.")
+    )
+    emit("global_stop_result", result)
 
 
 @socketio.on("velocity_control")

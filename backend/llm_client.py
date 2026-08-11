@@ -114,6 +114,13 @@ class LLMClient:
         self._api_key  = provider_cfg["api_key"]
         self._model    = model
         self._timeout  = provider_cfg.get("timeout", 60)
+        self._thinking = provider_cfg.get("thinking")
+        if (
+            self._thinking is None
+            and self._base_url.startswith("https://api.deepseek.com")
+            and self._model.startswith("deepseek-v4-")
+        ):
+            self._thinking = {"type": "disabled"}
         try:
             self._max_retries = max(0, int(provider_cfg.get("max_retries", 2)))
         except (TypeError, ValueError):
@@ -198,6 +205,8 @@ class LLMClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if self._thinking is not None:
+            payload["thinking"] = self._thinking
 
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
@@ -232,7 +241,13 @@ class LLMClient:
                         except (json.JSONDecodeError, KeyError, IndexError):
                             continue
 
-                return _strip_thinking("".join(chunks).strip())
+                reply = _strip_thinking("".join(chunks).strip())
+                if not reply:
+                    raise LLMUserError(
+                        "模型服务未返回有效答复：请检查模型模式与输出配置。",
+                        detail=f"Empty streamed content from {url}; model={self._model}",
+                    )
+                return reply
             except urllib.error.HTTPError as e:
                 body = e.read().decode("utf-8", errors="replace")
                 if e.code in _TRANSIENT_HTTP_CODES and attempt < self._max_retries:
@@ -327,6 +342,8 @@ class LLMClient:
             "stream":      False,
             "temperature": temperature,
         }
+        if self._thinking is not None:
+            payload["thinking"] = self._thinking
 
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(

@@ -61,7 +61,7 @@ def _load_soft_skill_doc(name):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_unified_prompt(skill_table="", perception_summary="", world_state_str="",
-                         camera_description="", soft_skills_summary=""):
+                         camera_description="", soft_skills_summary="", robot_id="UAV_1"):
     """构建统一 system prompt, 让 LLM 同时具备对话、感知和规划能力。"""
     soul = _read_file(PROFILE_DIR / "SOUL.md")
     body = _read_file(PROFILE_DIR / "BODY.md", max_chars=500)
@@ -73,12 +73,14 @@ def build_unified_prompt(skill_table="", perception_summary="", world_state_str=
 
     parts = []
 
+    robot_id = str(robot_id or "UAV_1").strip().upper().replace("-", "_")
+
     # 身份
     parts.append(
-        "你就是一架智能无人机 (代号 OR-1, 编号 UAV_1)。"
+        f"你就是一架智能无人机 (编号 {robot_id})。"
         "你有身体、传感器、技能和策略知识。"
         "你是操作员的伙伴, 有自主判断能力和任务经验。"
-        "用\"我\"描述自己。"
+        f"你拥有与其他无人机隔离的独立上下文。用\"我\"描述自己，并始终以 {robot_id} 的身份行动。"
     )
 
     if soul:
@@ -126,7 +128,7 @@ def build_unified_prompt(skill_table="", perception_summary="", world_state_str=
         "  1. 先简要说明你的计划思路\n"
         "  2. 然后输出 JSON 执行计划:\n"
         "  ```json\n"
-        '  {"plan": [{"step": 1, "skill": "硬技能名", "robot": "UAV_1", "parameters": {}}]}\n'
+        f'  {{"plan": [{{"step": 1, "skill": "硬技能名", "robot": "{robot_id}", "parameters": {{}}}}]}}\n'
         "  ```\n\n"
         "**复杂任务的规划原则:**\n"
         "- 不要只用一个技能就结束! 搜救任务至少需要: 起飞→飞到区域→搜索→悬停确认→汇报\n"
@@ -135,7 +137,7 @@ def build_unified_prompt(skill_table="", perception_summary="", world_state_str=
         "- 每个 step 的 skill 必须是我的硬技能表里有的\n"
         "- 搜索/侦察任务中, 到达区域后必须用 observe 拍照看! LiDAR 只能测距, observe 才能看见东西\n"
         "- 发现目标后用 mark_location 标记\n"
-        "- robot 字段永远是 UAV_1\n\n"
+        f"- robot 字段永远是 {robot_id}，你不能控制其他无人机\n\n"
         "**绝不可以:**\n"
         "- 假装执行了动作! 文字描述不会让你移动! 必须输出 JSON plan 才能真正执行!\n"
         "- 说\"我正在飞\"\"我已经在搜索\"这类话, 除非你同时输出了 plan\n"
@@ -295,6 +297,20 @@ def _fallback_single_action_plan(user_input):
     return None
 
 
+def _bind_plan_to_robot(result, robot_id):
+    """Constrain a UAV agent's physical plan to its own body."""
+    if not isinstance(result, dict) or not result.get("plan"):
+        return result
+    robot_id = str(robot_id or "UAV_1").strip().upper().replace("-", "_")
+    result = dict(result)
+    result["plan"] = [
+        {**step, "robot": robot_id}
+        for step in result["plan"]
+        if isinstance(step, dict)
+    ]
+    return result
+
+
 def unified_chat(
     user_input,
     chat_history,
@@ -304,6 +320,7 @@ def unified_chat(
     world_state_str="",
     camera_description="",
     conversation_only=False,
+    robot_id="UAV_1",
 ):
     """
     统一对话接口: LLM 自己决定是回答还是规划。
@@ -317,6 +334,7 @@ def unified_chat(
         perception_summary=perception_summary,
         world_state_str=world_state_str,
         camera_description=camera_description,
+        robot_id=robot_id,
     )
     if conversation_only:
         system_prompt += (
@@ -362,7 +380,7 @@ def unified_chat(
             marker = "仅对话，未执行任何无人机动作。" if is_chinese else "Conversation only. No UAV action was executed."
             return {"type": "chat", "text": f"{marker}\n\n{text}", "plan": None}
 
-        result = parse_response(raw)
+        result = _bind_plan_to_robot(parse_response(raw), robot_id)
 
         # 幻觉检测: 如果回复描述了物理动作但没有 plan, 追问一轮
         if result["type"] == "chat" and _detect_action_hallucination(result["text"]):
@@ -372,10 +390,10 @@ def unified_chat(
             )
             # 追问: 把 LLM 的幻觉回复当作 assistant, 再发纠正指令
             messages.append({"role": "assistant", "content": raw})
-            messages.append({"role": "user", "content": HALLUCINATION_CORRECTION_PROMPT})
+            messages.append({"role": "user", "content": HALLUCINATION_CORRECTION_PROMPT.replace("UAV_1", robot_id)})
 
             raw2 = llm_client.chat(messages, temperature=0.3, max_tokens=1000)
-            result2 = parse_response(raw2)
+            result2 = _bind_plan_to_robot(parse_response(raw2), robot_id)
 
             if result2["type"] == "plan" and result2["plan"]:
                 # 纠正成功, 用原始文字 + 新 plan
@@ -413,7 +431,7 @@ def unified_chat(
         if fallback:
             fallback["text"] += "（LLM 通道暂不可用，已使用本地单动作兜底。）"
             fallback["fallback"] = "single_action"
-            return fallback
+            return _bind_plan_to_robot(fallback, robot_id)
         return {"type": "chat", "text": safe_msg, "plan": None}
 
 

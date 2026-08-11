@@ -50,3 +50,18 @@ def test_conversation_only_mode_does_not_use_action_fallback_on_llm_error():
 
     assert result["type"] == "chat"
     assert result["plan"] is None
+
+
+def test_uav_agent_identity_and_plan_are_bound_to_selected_robot():
+    client = FakeClient(
+        'Moving now.\n```json\n'
+        '{"plan": [{"step": 1, "skill": "fly_to", "robot": "UAV_1", "parameters": {}}]}'
+        '\n```'
+    )
+
+    result = unified_chat("fly north", [], client, robot_id="UAV-3")
+
+    assert result["type"] == "plan"
+    assert result["plan"][0]["robot"] == "UAV_3"
+    assert "编号 UAV_3" in client.messages[0]["content"]
+    assert "不能控制其他无人机" in client.messages[0]["content"]

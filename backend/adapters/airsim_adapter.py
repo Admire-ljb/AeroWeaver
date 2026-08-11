@@ -257,6 +257,30 @@ class AirSimAdapter(SimAdapter):
             raise RuntimeError("AirSim RPC client unavailable")
         client._rpc.call("simSetVehiclePose", pose, True, vehicle_name)
 
+    def reset_robot_pose(self, robot_id: str, position: list, *, in_air: bool = True) -> ActionResult:
+        """Set one pooled AirSim vehicle pose during pre-mission initialization."""
+        values = list(position or [])
+        if len(values) < 3:
+            return ActionResult(False, "position requires three coordinates")
+        vehicle_name = self.vehicle_for_robot(robot_id)
+        try:
+            self._stop_hold()
+            target = [float(values[0]), float(values[1]), float(values[2])]
+            self._set_vehicle_global_pose(vehicle_name, *target)
+            if str(robot_id) == self._active_robot:
+                self._hold_x, self._hold_y, self._hold_z = target
+                self._landed = not bool(in_air)
+            with self._manual_lock:
+                self._manual_states.pop(vehicle_name, None)
+            return ActionResult(
+                True,
+                "AirSim scene start pose initialized",
+                {"position": target, "vehicle": vehicle_name},
+            )
+        except Exception as exc:
+            logger.exception("AirSim scene reset failed for %s", robot_id)
+            return ActionResult(False, f"AirSim scene reset failed: {exc}")
+
     def apply_vehicle_pool_layout(self, layout: list[dict]) -> ActionResult:
         """Activate or park all pre-spawned UAVs without restarting Unreal."""
         if not self._connected:

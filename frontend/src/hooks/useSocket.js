@@ -45,12 +45,25 @@ export function useSocket() {
   const [cockpitOpen, setCockpitOpen] = useState(false)
   const [cockpitInitialView, setCockpitInitialView] = useState('front')
   const [chatHistory, setChatHistory] = useState([])
+  const [agentMessages, setAgentMessages] = useState([])
+  const [commLinks, setCommLinks] = useState([])
+  const [commanderProgress, setCommanderProgress] = useState({
+    mission_id: '',
+    status: 'idle',
+    world_step: 0,
+    agents: [],
+    metrics: [],
+    latest_report: '',
+  })
 
   useEffect(() => {
     const socket = io(SERVER_URL, {
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 10,
+      reconnection: true,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 10000,
     })
     socketRef.current = socket
 
@@ -58,9 +71,21 @@ export function useSocket() {
       setConnected(true)
       console.log('[Socket] connected:', socket.id)
     })
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
       setConnected(false)
-      console.log('[Socket] disconnected')
+      console.log('[Socket] disconnected:', reason)
+      const now = Date.now()
+      setLogs(prev => {
+        const next = [...prev, { ts: now, level: 'warn', msg: '控制链路中断，正在自动重连...' }]
+        return next.length > 300 ? next.slice(-300) : next
+      })
+    })
+    socket.io.on('reconnect', () => {
+      const now = Date.now()
+      setLogs(prev => {
+        const next = [...prev, { ts: now, level: 'success', msg: '控制链路已恢复。' }]
+        return next.length > 300 ? next.slice(-300) : next
+      })
     })
 
     socket.on('system_status', (data) => setSystemStatus(data))
@@ -103,15 +128,39 @@ export function useSocket() {
     socket.on('sensor_cameras', (data) => setSensorCameras(data))
     socket.on('sensor_scene', (data) => setSensorScene(data))
     socket.on('sensor_lidar', (data) => setSensorLidar(data))
+    socket.on('uav_comm_links', (data) => {
+      setCommLinks(Array.isArray(data?.links) ? data.links : [])
+    })
+    socket.on('commander_progress', (data) => {
+      if (data && typeof data === 'object') setCommanderProgress(data)
+    })
+    socket.on('uav_agent_message', (data) => {
+      if (!data?.id || !data?.robot_id) return
+      setAgentMessages(prev => {
+        if (prev.some(message => message.id === data.id)) return prev
+        return [...prev, data].slice(-500)
+      })
+    })
     socket.on('ai_chat_reply', (data) => {
       if (data.ok && data.reply) {
         const now = Date.now()
         setChatHistory(prev => [
           ...prev,
-          { role: 'assistant', content: data.reply, intent: data.intent, ts: now },
+          { role: 'assistant', content: data.reply, intent: data.intent, robot_id: data.robot_id, ts: now },
         ])
         setLogs(prev => {
           const next = [...prev, { ts: now, level: data.intent === 'RESULT' ? 'warn' : 'info', msg: data.reply }]
+          return next.length > 300 ? next.slice(-300) : next
+        })
+      } else if (data?.ok === false) {
+        const now = Date.now()
+        const error = data.error || data.message || '请求未被服务端接受，请重试。'
+        setChatHistory(prev => [
+          ...prev,
+          { role: 'assistant', content: error, intent: 'ERROR', robot_id: data.robot_id, ts: now },
+        ])
+        setLogs(prev => {
+          const next = [...prev, { ts: now, level: 'error', msg: error }]
           return next.length > 300 ? next.slice(-300) : next
         })
       }
@@ -212,16 +261,36 @@ export function useSocket() {
   const closeCockpit = useCallback(() => setCockpitOpen(false), [])
 
   // AI chat.
-  const sendChat = useCallback((message, interactionMode = 'auto', displayMessage = message) => {
-    if (socketRef.current) {
+  const sendChat = useCallback((
+    message,
+    interactionMode = 'auto',
+    displayMessage = message,
+    robotId = 'COMMANDER',
+    metadata = {},
+  ) => {
+    const socket = socketRef.current
+    if (socket) {
       const now = Date.now()
       // Keep machine-readable area context out of the operator-facing transcript.
-      setChatHistory(prev => [...prev, { role: 'user', content: displayMessage, mode: interactionMode, ts: now }])
+      setChatHistory(prev => [...prev, { role: 'user', content: displayMessage, mode: interactionMode, robot_id: robotId, ts: now }])
       setLogs(prev => {
         const next = [...prev, { ts: now, level: 'user', msg: displayMessage }]
         return next.length > 300 ? next.slice(-300) : next
       })
-      socketRef.current.emit('ai_chat', { message, mode: interactionMode })
+      if (!socket.connected) {
+        socket.connect()
+        setLogs(prev => {
+          const next = [...prev, { ts: Date.now(), level: 'warn', msg: '链路恢复中，消息已进入发送队列。' }]
+          return next.length > 300 ? next.slice(-300) : next
+        })
+      }
+      socket.emit('ai_chat', {
+        ...metadata,
+        message,
+        display_message: displayMessage,
+        mode: interactionMode,
+        robot_id: robotId,
+      })
     }
   }, [])
   // Get raw socket reference for cockpit.
@@ -246,7 +315,10 @@ export function useSocket() {
     cockpitOpen,
     cockpitInitialView,
     chatHistory,
+    agentMessages,
+    commLinks,
     executeSkill,
+    commanderProgress,
     selectRobot,
     setMode,
     submitAiTask,

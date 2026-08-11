@@ -54,10 +54,15 @@ def _register_definition(web, definition: dict) -> list[str]:
         previous = registry.auto_generate_doc
         registry.auto_generate_doc = False
         try:
-            registry.register_skill(OnlineCompositeSkill(definition))
+            accepted = registry.register_skill(OnlineCompositeSkill(definition))
         finally:
             registry.auto_generate_doc = previous
-        registered.append(robot_id)
+        if accepted:
+            registered.append(robot_id)
+    if not registered:
+        raise ValueError(
+            "Composite Skill is not compatible with the active adapter skill profile"
+        )
     return registered
 
 

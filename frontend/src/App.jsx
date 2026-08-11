@@ -320,7 +320,7 @@ function taskAreaFromMapPoints(start, end) {
 function taskAreaSummary(area, language) {
   if (!area) return ''
   const size = `${area.widthMeters.toFixed(0)} x ${area.heightMeters.toFixed(0)} m`
-  return textFor(language, `任务区域 ${size}`, `Task area ${size}`)
+  return textFor(language, `任务硬边界 ${size}`, `Hard boundary ${size}`)
 }
 
 function taskAreaPrompt(area, language) {
@@ -330,8 +330,8 @@ function taskAreaPrompt(area, language) {
   const size = `${area.widthMeters.toFixed(1)} x ${area.heightMeters.toFixed(1)} m`
   return textFor(
     language,
-    `地图框选任务区域：${bounds}；中心 N/E=${center}；尺寸 E x N=${size}。所有搜索、巡检和编队动作应限制在此边界内。`,
-    `Map-selected mission area: ${bounds}; center N/E=${center}; size E x N=${size}. Keep all search, inspection, and formation actions within this boundary.`,
+    `地图框选任务硬边界：${bounds}；中心 N/E=${center}；尺寸 E x N=${size}。初始化位置和每次移动都必须保持在此边界内。`,
+    `Map-selected HARD mission boundary: ${bounds}; center N/E=${center}; size E x N=${size}. Initialization and every movement must remain inside this boundary.`,
   )
 }
 
@@ -658,7 +658,7 @@ function LanguageToggle({ language, onChange }) {
   )
 }
 
-function MissionHeader({ connected, systemStatus, now, language, onLanguageChange, onInit, onStop }) {
+function MissionHeader({ connected, systemStatus, taskActive, now, language, onLanguageChange, onInit, onStop }) {
   const t = (zh, en) => textFor(language, zh, en)
   return (
     <header className="mission-header">
@@ -679,8 +679,8 @@ function MissionHeader({ connected, systemStatus, now, language, onLanguageChang
         {!systemStatus.initialized && (
           <button className="mini-action" onClick={onInit}>{t('初始化', 'Initialize')}</button>
         )}
-        {systemStatus.is_executing && (
-          <button className="mini-action danger" onClick={onStop}>{t('打断', 'Abort')}</button>
+        {taskActive && (
+          <button className="mini-action danger" onClick={onStop}>{t('停止任务', 'Stop Mission')}</button>
         )}
         <LanguageToggle language={language} onChange={onLanguageChange} />
         <span className={`link-state ${connected ? 'online' : 'offline'}`}>
@@ -1577,6 +1577,180 @@ function TrajectoryWorkspace({
   )
 }
 
+function AgentDialogueWorkspace({ language, uavs, selectedAgentId, messages, commLinks, commanderProgress, onSelectAgent }) {
+  const t = makeTranslator(language)
+  const agents = [
+    { robotId: 'COMMANDER', id: 'Commander', color: '#f2ac23' },
+    ...uavs,
+  ]
+  const agentIds = agents.map((agent) => agent.robotId)
+  const activeAgentId = agentIds.includes(selectedAgentId) ? selectedAgentId : 'COMMANDER'
+  const rows = messages.filter((message) => (
+    message.robot_id === activeAgentId
+    || message.sender === activeAgentId
+    || message.receiver === activeAgentId
+  ))
+  const activeLinks = commLinks.filter((link) => link.status === 'active')
+  const isCommander = activeAgentId === 'COMMANDER'
+  const progressAgents = commanderProgress?.agents || []
+  const progressMetrics = commanderProgress?.metrics || []
+
+  return (
+    <div className="workspace-body agent-dialogue-workspace">
+      <div className="ops-summary agent-dialogue-summary">
+        <div>
+          <strong>{isCommander ? t('中央任务初始化器', 'Central Mission Initializer') : t('独立运动智能体', 'Independent Motion Agent')}</strong>
+          <span>{activeAgentId} · {isCommander ? t('仅初始化任务与分配目标，无飞行控制权', 'Task initialization and assignment only; no flight authority') : t('独立上下文、自主决策与本机技能控制', 'Isolated context, autonomous decisions, and own-body skill control')}</span>
+        </div>
+        <span className="agent-state-indicator"><i />{t('通信在线', 'Comms online')}</span>
+      </div>
+
+      <div className="agent-selector" aria-label={t('选择对话节点', 'Select dialogue node')}>
+        {agents.map((agent) => (
+          <button
+            key={agent.robotId}
+            className={agent.robotId === activeAgentId ? 'active' : ''}
+            onClick={() => onSelectAgent(agent.robotId)}
+          >
+            <i style={{ borderColor: agent.color }} />
+            {agent.id}
+          </button>
+        ))}
+      </div>
+      {isCommander && commanderProgress?.mission_id && (
+        <section className="commander-briefing" aria-label={t('\u4efb\u52a1\u8fdb\u5ea6\u7b80\u62a5', 'Mission Progress Briefing')}>
+          <div className="commander-briefing-head">
+            <div>
+              <span>{t('\u5f53\u524d\u5168\u5c40\u4efb\u52a1', 'Current Global Mission')}</span>
+              <strong>{commanderProgress.description || t('\u4efb\u52a1\u51c6\u5907\u4e2d', 'Mission preparing')}</strong>
+            </div>
+            <span className={`mission-phase ${commanderProgress.status || 'idle'}`}>
+              {({
+                initializing: t('\u573a\u666f\u521d\u59cb\u5316', 'Scene reset'),
+                assigned: t('\u4efb\u52a1\u5df2\u5206\u914d', 'Assigned'),
+                planning: t('\u667a\u80fd\u4f53\u51b3\u7b56', 'Agent decisions'),
+                executing: t('\u6267\u884c\u4e2d', 'Executing'),
+                consensus_pending: t('等待终止投票', 'Collecting end votes'),
+                awaiting_consensus: t('等待全体共识', 'Awaiting consensus'),
+                complete: t('\u5df2\u5b8c\u6210', 'Complete'),
+                partial: t('\u90e8\u5206\u5b8c\u6210', 'Partial'),
+                cancelled: t('已终止', 'Stopped'),
+                timeout: t('步数超时', 'Step timeout'),
+              })[commanderProgress.status] || t('\u5f85\u547d', 'Standby')}
+            </span>
+          </div>
+
+          <div className="commander-kpis">
+            <div><span>{t('\u4e16\u754c\u6b65', 'World step')}</span><strong>{commanderProgress.world_step || 0}{commanderProgress.max_world_steps ? ` / ${commanderProgress.max_world_steps}` : ''}</strong></div>
+            <div><span>{t('\u673a\u7fa4\u89c4\u6a21', 'Fleet')}</span><strong>{commanderProgress.total_agents || progressAgents.length}</strong></div>
+            <div><span>{t('\u79fb\u52a8\u9884\u7b97', 'Move budget')}</span><strong>{Number(commanderProgress.movement_budget_m || 0).toFixed(1)} m</strong></div>
+            <div><span>{t('\u901a\u4fe1\u94fe\u8def', 'Comms')}</span><strong>{commanderProgress.active_links || 0}</strong></div>
+          </div>
+
+          <div className="commander-progress-grid">
+            <div className="commander-distribution">
+              <span className="commander-section-label">{t('\u65e0\u4eba\u673a\u5206\u5e03', 'UAV Distribution')}</span>
+              {progressAgents.map((agent) => (
+                <div className="commander-uav-row" key={agent.robot_id}>
+                  <strong>{String(agent.robot_id).replace('_', '-')}</strong>
+                  <span>[{formatVec(agent.position)}]</span>
+                  <span>{({
+                    initializing: t('\u521d\u59cb\u5316', 'Initializing'),
+                    deciding: t('\u51b3\u7b56\u4e2d', 'Deciding'),
+                    executing: t('\u6267\u884c\u4e2d', 'Executing'),
+                    assessing: t('评估终止条件', 'Assessing end conditions'),
+                    continuing: t('继续任务', 'Continuing'),
+                    ready: t('同意结束', 'Ready to end'),
+                    reporting: t('\u62a5\u544a\u4e2d', 'Reporting'),
+                    complete: t('\u5df2\u5b8c\u6210', 'Complete'),
+                    failed: t('\u5931\u8d25', 'Failed'),
+                    cancelled: t('已终止', 'Stopped'),
+                    timeout: t('步数超时', 'Step timeout'),
+                  })[agent.status] || agent.status || t('\u5f85\u547d', 'Idle')}</span>
+                  <span>{Number(agent.moved_distance_m || 0).toFixed(1)} m</span>
+                </div>
+              ))}
+            </div>
+            <div className="commander-metrics">
+              <span className="commander-section-label">{t('\u4efb\u52a1\u6307\u6807', 'Mission Metrics')}</span>
+              {progressMetrics.map((metric) => {
+                const current = Number(metric.current || 0)
+                const target = Number(metric.target)
+                const hasTarget = metric.target !== null
+                  && metric.target !== undefined
+                  && metric.target !== ''
+                  && Number.isFinite(target)
+                const lowerIsBetter = metric.measurement === 'capture_distance_m'
+                const ratio = hasTarget && target > 0
+                  ? Math.min(100, Math.max(0, lowerIsBetter
+                    ? (current > 0 ? target / current * 100 : 0)
+                    : current / target * 100))
+                  : 0
+                return (
+                  <div className="commander-metric-row" key={metric.key}>
+                    <div>
+                      <span>{metric.label}</span>
+                      <strong>{current.toFixed(1)}{metric.unit || ''}{hasTarget ? ` / ${target}${metric.unit || ''}` : ''}</strong>
+                    </div>
+                    {hasTarget && <i><b style={{ width: `${ratio}%` }} /></i>}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="commander-report">
+            <span>{t('\u6307\u6325\u5b98\u62a5\u544a', 'Commander Report')}</span>
+            <p>{commanderProgress.latest_report || commanderProgress.strategy}</p>
+          </div>
+        </section>
+      )}
+
+      <div className="comm-network-strip">
+        <div>
+          <span>{t('UAV 通信网络', 'UAV Communication Network')}</span>
+          <strong>{activeLinks.length} {t('条链路在线', 'active links')}</strong>
+        </div>
+        <div className="comm-link-list">
+          {activeLinks.map((link) => (
+            <span className="comm-link" key={link.id}>
+              {String(link.source).replace('_', '-')} ↔ {String(link.target).replace('_', '-')}
+            </span>
+          ))}
+          {!activeLinks.length && <span className="comm-link idle">{t('等待 Commander 发布任务', 'Awaiting Commander dispatch')}</span>}
+        </div>
+      </div>
+
+      <div className="agent-message-list">
+        {rows.map((message) => {
+          const fromOperator = message.sender === 'Operator'
+          const fromCommander = message.sender === 'COMMANDER'
+          const tone = fromOperator ? 'operator' : fromCommander ? 'commander' : 'uav'
+          const time = formatLogTime(message.ts)
+          return (
+            <div className={`agent-message ${tone}`} key={message.id}>
+              <div className="agent-message-meta">
+                <strong>{String(message.sender).replace('_', '-')}</strong>
+                <span>→</span>
+                <strong>{String(message.receiver).replace('_', '-')}</strong>
+                <time>{time}</time>
+              </div>
+              <p>{message.content}</p>
+            </div>
+          )
+        })}
+        {!rows.length && (
+          <div className="agent-dialogue-empty">
+            <strong>{activeAgentId}</strong>
+            <span>{isCommander
+              ? t('输入全局任务后，Commander 将为全部激活 UAV 分配子任务。', 'Enter a global mission; Commander will assign every active UAV.')
+              : t('等待 Commander 发布子任务和其他 UAV 的协同消息。', 'Awaiting a Commander assignment and peer coordination messages.')}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 function RightWorkspace({
   activeView,
   timeline,
@@ -1598,6 +1772,12 @@ function RightWorkspace({
   lastAiReport,
   skillPanelProps,
   trajectoryProps,
+  commanderProgress,
+  agentMessages,
+  commLinks,
+  uavs,
+  selectedAgentId,
+  onSelectAgent,
   onSetView,
   onShowLog,
   onShowSkill,
@@ -1610,6 +1790,7 @@ function RightWorkspace({
   const showSkill = activeView === 'skill' && skillPanelOpen
   const tabs = [
     { key: 'log', label: t('日志', 'Log') },
+    { key: 'agents', label: t('指挥通信', 'Command') },
     { key: 'fleet', label: t('态势', 'Situation') },
     { key: 'tracks', label: t('轨迹', 'Tracks') },
     { key: 'skill', label: t('Skill', 'Skill') },
@@ -1652,6 +1833,16 @@ function RightWorkspace({
             <SkillPanel {...skillPanelProps} />
           </div>
         </div>
+      ) : activeView === 'agents' ? (
+        <AgentDialogueWorkspace
+          language={language}
+          uavs={uavs}
+          selectedAgentId={selectedAgentId}
+          messages={agentMessages}
+          commLinks={commLinks}
+          commanderProgress={commanderProgress}
+          onSelectAgent={onSelectAgent}
+        />
       ) : activeView === 'fleet' ? (
         <FleetWorkspace
           language={language}
@@ -2467,7 +2658,7 @@ function DeviceWorkspace({ language, connected }) {
   )
 }
 
-function TaskComposer({ language, disabled, onSubmit, taskArea, onClearTaskArea }) {
+function TaskComposer({ language, disabled, taskActive, onSubmit, onStop, taskArea, onClearTaskArea, targetAgentId }) {
   const t = makeTranslator(language)
   const [value, setValue] = useState('')
   const [mode, setMode] = useState('auto')
@@ -2482,13 +2673,27 @@ function TaskComposer({ language, disabled, onSubmit, taskArea, onClearTaskArea 
   return (
     <section className="task-composer">
       <div className="composer-head">
-        <h2>{t('消息输入', 'Operator Input')}</h2>
+        <div className="composer-title">
+          <h2>{t('全局任务输入', 'Global Mission Input')}</h2>
+          <span className="agent-target-chip">{t('发送至', 'To')} <strong>{String(targetAgentId || 'COMMANDER').replace('_', '-')}</strong></span>
+        </div>
         <div className="composer-actions">
           {taskArea && mode !== 'chat' && (
             <div className="task-area-chip" title={taskAreaPrompt(taskArea, language)}>
               <span>{taskAreaSummary(taskArea, language)}</span>
               <button type="button" onClick={onClearTaskArea} aria-label={t('清除任务区域', 'Clear task area')}>×</button>
             </div>
+          )}
+          {taskActive && (
+            <button
+              type="button"
+              className="global-stop-button"
+              onClick={onStop}
+              title={t('立即终止当前任务并让全部无人机停止移动', 'Stop the current mission and brake every UAV')}
+            >
+              <i aria-hidden="true" />
+              {t('停止任务', 'Stop Mission')}
+            </button>
           )}
           <div className="composer-mode">
             <button className={mode === 'auto' ? 'active' : ''} onClick={() => setMode('auto')}>{t('智能', 'Auto')}</button>
@@ -2509,10 +2714,10 @@ function TaskComposer({ language, disabled, onSubmit, taskArea, onClearTaskArea 
           }}
           enterKeyHint="send"
           placeholder={mode === 'chat'
-            ? t('输入对话消息...', 'Type a conversation message...')
+            ? t('与 Commander 对话...', 'Message the Commander...')
             : mode === 'mission'
-              ? t('输入需要立即执行的任务...', 'Enter a mission to execute...')
-              : t('输入问题或任务...', 'Ask a question or assign a mission...')}
+              ? t('输入需要立即分发给全部 UAV 的任务...', 'Enter a mission for all active UAVs...')
+              : t('输入全局任务或向 Commander 提问...', 'Enter a global mission or ask Commander...')}
           disabled={disabled}
         />
         <button onClick={submit} disabled={disabled || !value.trim()}>
@@ -2543,7 +2748,10 @@ export default function App() {
     cockpitOpen,
     cockpitInitialView,
     chatHistory,
-    submitAiTask,
+    agentMessages,
+    commLinks,
+    commanderProgress,
+
     sendChat,
     stopExecution,
     initSystem,
@@ -2573,6 +2781,7 @@ export default function App() {
   const [showPayloadMenu, setShowPayloadMenu] = useState(false)
   const [skillPanelOpen, setSkillPanelOpen] = useState(false)
   const [rightPanelView, setRightPanelView] = useState('log')
+  const [selectedDialogueAgent, setSelectedDialogueAgent] = useState('COMMANDER')
   const [desiredUavCount, setDesiredUavCount] = useState(DEFAULT_UAV_COUNT)
   const [fleetSync, setFleetSync] = useState({ status: 'idle', message: '' })
   const [mapTools, setMapTools] = useState({ measure: false, area: false, layers: false, settings: false })
@@ -2694,21 +2903,22 @@ export default function App() {
   }, [selectedUavId, uavs])
 
   const submitMission = (text, inputMode = 'auto') => {
-    setRightPanelView('log')
     const areaContext = inputMode !== 'chat' ? taskAreaPrompt(selectedTaskArea, language) : ''
     const preparedText = areaContext ? `${text}
 
 ${areaContext}` : text
 
-    if (inputMode === 'mission') {
-      setMissionPrompt(preparedText)
-      if (systemStatus.mode !== 'ai') setMode('ai')
-      submitAiTask(preparedText, true)
-      return
-    }
-
-    if (inputMode === 'auto' && systemStatus.mode !== 'ai') setMode('ai')
-    sendChat(preparedText, inputMode, text)
+    if (inputMode === 'mission') setMissionPrompt(preparedText)
+    if (inputMode !== 'chat' && systemStatus.mode !== 'ai') setMode('ai')
+    const taskArea = inputMode !== 'chat' && selectedTaskArea
+      ? {
+          north_min: selectedTaskArea.northMin,
+          north_max: selectedTaskArea.northMax,
+          east_min: selectedTaskArea.eastMin,
+          east_max: selectedTaskArea.eastMax,
+        }
+      : null
+    sendChat(preparedText, inputMode, text, 'COMMANDER', { task_area: taskArea })
   }
 
   const activateUav = (uav, openMenu = false) => {
@@ -2920,6 +3130,13 @@ ${areaContext}` : text
       <MissionHeader
         connected={connected}
         systemStatus={systemStatus}
+        taskActive={Boolean(
+          systemStatus.is_executing
+          || (
+            commanderProgress?.mission_id
+            && !['idle', 'complete', 'partial', 'cancelled', 'timeout'].includes(commanderProgress.status)
+          )
+        )}
         now={now}
         language={language}
         onLanguageChange={setLanguage}
@@ -3016,6 +3233,17 @@ ${areaContext}` : text
             aiStream={aiStream}
             lastAiPlan={lastAiPlan}
             lastAiReport={lastAiReport}
+            agentMessages={agentMessages}
+            commLinks={commLinks}
+            commanderProgress={commanderProgress}
+            uavs={uavs}
+            selectedAgentId={selectedDialogueAgent}
+            onSelectAgent={(robotId) => {
+              setSelectedDialogueAgent(robotId)
+              if (robotId === 'COMMANDER') return
+              const target = uavs.find((uav) => uav.robotId === robotId)
+              if (target) activateUav(target)
+            }}
             trajectoryProps={{
               language,
               samples: trajectorySamples,
@@ -3069,10 +3297,19 @@ ${areaContext}` : text
           />
           <TaskComposer
             language={language}
-            disabled={!connected || !systemStatus.initialized}
+            disabled={!systemStatus.initialized}
+            taskActive={Boolean(
+              systemStatus.is_executing
+              || (
+                commanderProgress?.mission_id
+                && !['idle', 'complete', 'partial', 'cancelled', 'timeout'].includes(commanderProgress.status)
+              )
+            )}
             onSubmit={submitMission}
+            onStop={stopExecution}
             taskArea={selectedTaskArea}
             onClearTaskArea={() => setSelectedTaskArea(null)}
+            targetAgentId="COMMANDER"
           />
         </aside>
       </main>

@@ -21,7 +21,7 @@ registry.py
     }
 """
 
-from typing import Optional
+from typing import Iterable, Optional
 from skills.base_skill import Skill
 
 
@@ -31,7 +31,13 @@ class SkillRegistry:
     注册时自动生成 skill.md；维护 last_execution_status 和 doc_path 运行时状态。
     """
 
-    def __init__(self, auto_generate_doc: bool = True):
+    def __init__(
+        self,
+        auto_generate_doc: bool = True,
+        *,
+        allowed_skill_names: Iterable[str] | None = None,
+        soft_skill_names: Iterable[str] | None = None,
+    ):
         """
         Args:
             auto_generate_doc: 是否在注册时自动生成 skill.md，默认 True
@@ -39,10 +45,33 @@ class SkillRegistry:
         """
         self._registry: dict[str, Skill] = {}
         self.auto_generate_doc = auto_generate_doc
+        self._allowed_skill_names = (
+            None
+            if allowed_skill_names is None
+            else frozenset(str(name) for name in allowed_skill_names)
+        )
+        self._soft_skill_names = (
+            None
+            if soft_skill_names is None
+            else frozenset(str(name) for name in soft_skill_names)
+        )
 
     # ── 注册 ─────────────────────────────────────────────────────────────────
 
-    def register_skill(self, skill: Skill) -> None:
+    def _skill_is_allowed(self, skill: Skill) -> bool:
+        if self._allowed_skill_names is None or skill.name in self._allowed_skill_names:
+            return True
+        steps = getattr(skill, "steps", None)
+        if not isinstance(steps, list) or not steps:
+            return False
+        component_names = {
+            str(step.get("skill") or "")
+            for step in steps
+            if isinstance(step, dict)
+        }
+        return bool(component_names) and component_names <= self._allowed_skill_names
+
+    def register_skill(self, skill: Skill) -> bool:
         """
         注册技能实例。
         注册后：
@@ -57,6 +86,8 @@ class SkillRegistry:
         """
         if not skill.name:
             raise ValueError("Skill must have a non-empty name.")
+        if not self._skill_is_allowed(skill):
+            return False
         if skill.name in self._registry:
             raise ValueError(f"Skill '{skill.name}' is already registered.")
 
@@ -68,6 +99,7 @@ class SkillRegistry:
 
         if self.auto_generate_doc:
             self._trigger_doc_generation(skill)
+        return True
 
     def _trigger_doc_generation(self, skill: Skill) -> None:
         """后台线程调用 LLM 生成 skill.md，完成后将路径写回 skill.doc_path。
@@ -103,14 +135,27 @@ class SkillRegistry:
             list[dict]: 精简技能表条目列表
         """
         entries = [skill.get_catalog_entry() for skill in self._registry.values()]
+        if self._soft_skill_names == frozenset():
+            return entries
         # 合并软技能文档条目
         try:
             from skills.soft_skill_manager import get_soft_skill_manager
             mgr = get_soft_skill_manager()
-            entries.extend(mgr.get_catalog_entries())
+            soft_entries = mgr.get_catalog_entries()
+            if self._soft_skill_names is not None:
+                soft_entries = [
+                    entry
+                    for entry in soft_entries
+                    if entry.get("name") in self._soft_skill_names
+                ]
+            entries.extend(soft_entries)
         except Exception:
             pass
         return entries
+
+    def allows_soft_skill(self, name: str) -> bool:
+        """Return whether a document-driven strategy is exposed by this registry."""
+        return self._soft_skill_names is None or str(name) in self._soft_skill_names
 
     def list_skills(self) -> list[dict]:
         """

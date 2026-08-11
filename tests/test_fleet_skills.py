@@ -98,6 +98,14 @@ def test_mock_fleet_resize_updates_world_registries_and_adapter(isolated_mock_fl
     assert set(isolated_mock_fleet.get_robot_snapshot()) == {
         "UAV_1", "UAV_2", "UAV_3", "UAV_4", "UAV_5",
     }
+    assert all(
+        robot["sensor_status"] == {
+            "camera": False,
+            "lidar": False,
+            "microphone": False,
+        }
+        for robot in server.state.world_model.get_world_state()["robots"].values()
+    )
 
 
 def test_llm_fleet_skill_may_resize_during_ai_mission(isolated_mock_fleet):

@@ -110,7 +110,7 @@ class Executor:
             try:
                 from skills.soft_skill_manager import get_soft_skill_manager
                 mgr = get_soft_skill_manager()
-                if mgr.skill_exists(skill_name):
+                if registry.allows_soft_skill(skill_name) and mgr.skill_exists(skill_name):
                     doc = mgr.get_skill_doc(skill_name)
                     logs.append(f"[Executor] 软技能 '{skill_name}' → 加载策略文档")
                     return ExecutionResult(
