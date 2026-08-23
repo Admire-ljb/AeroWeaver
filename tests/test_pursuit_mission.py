@@ -4,13 +4,17 @@ import time
 
 from adapters.mock_adapter import MockAdapter
 from brain.pursuit_mission import (
+    boundary_status,
     build_local_observation,
+    encirclement_motion_decision,
+    encirclement_slot,
     build_pursuit_initialization,
     constrain_direction_to_area,
     direction_changed,
     evaluate_pursuit,
     parse_motion_decision,
     parse_pursuit_request,
+    parse_pursuit_spec,
     position_inside_area,
     pursuit_links,
 )
@@ -22,6 +26,33 @@ def _spec():
         ["UAV_1", "UAV_2", "UAV_3", "UAV_4"],
     )
 
+
+def test_llm_structured_pursuit_spec_sets_chinese_speed_semantics():
+    spec = parse_pursuit_spec(
+        {
+            "type": "pursuit",
+            "pursuers": ["UAV1", "UAV2", "UAV3"],
+            "evader": "UAV4",
+            "pursuer_speed_mps": 14,
+            "speed_ratio_by_robot": {"UAV4": 2.0},
+        },
+        ["UAV_1", "UAV_2", "UAV_3", "UAV_4"],
+    )
+
+    assert spec["pursuers"] == ["UAV_1", "UAV_2", "UAV_3"]
+    assert spec["evader"] == "UAV_4"
+    assert spec["speed_mps_by_robot"]["UAV_4"] == 28.0
+    assert spec["evader_speed_mps"] == 28.0
+
+
+def test_boundary_status_warns_before_hard_edge():
+    bounds = {"north_min": -20, "north_max": 30, "east_min": 10, "east_max": 70}
+    status = boundary_status([28.5, 40, -8], bounds)
+
+    assert status["status"] == "warning"
+    assert status["nearest_edge"] == "north_max"
+    assert status["nearest_distance_m"] == 1.5
+    assert "turn inward" in status["warning"]
 
 def test_pursuit_request_expands_uav_range_and_sets_hard_limits():
     spec = _spec()
@@ -72,7 +103,9 @@ def test_mock_physics_cannot_cross_selected_area_boundary():
         adapter.connect()
         adapter.seed_fleet({"UAV_1": {"position": [4.8, 0, -8], "in_air": True}})
         adapter.set_operating_bounds(bounds, ["UAV_1"])
-        adapter.set_velocity_ned_for("UAV_1", 20, 20, 0)
+        result = adapter.set_velocity_ned_for("UAV_1", 20, 20, 0)
+        assert result.data["boundary_warning"] is True
+        assert "north_max" in result.data["boundary_blocked_axes"]
         time.sleep(0.2)
         position = adapter.get_robot_snapshot()["UAV_1"]["position"]
         assert position_inside_area(position, bounds)
@@ -196,3 +229,81 @@ def test_pursuit_timeout_is_distinct_from_completion():
 
     assert outcome["status"] == "timeout"
     assert outcome["evidence"]["closest_distance_m"] > spec["capture_radius_m"]
+
+
+def test_fast_encirclement_assigns_distinct_local_slots_without_llm():
+    spec = _spec()
+    positions = {
+        "UAV_1": [-20, 12, -8],
+        "UAV_2": [-20, 0, -8],
+        "UAV_3": [-20, -12, -8],
+        "UAV_4": [0, 0, -8],
+    }
+    velocities = {robot_id: [0, 0, 0] for robot_id in positions}
+    observations = {
+        robot_id: build_local_observation(robot_id, positions, velocities, spec)
+        for robot_id in spec["participants"]
+    }
+
+    slots = [encirclement_slot(observations[robot_id], spec) for robot_id in spec["pursuers"]]
+    decisions = [
+        encirclement_motion_decision(robot_id, observations[robot_id], spec)
+        for robot_id in spec["pursuers"]
+    ]
+
+    assert [slot["slot_index"] for slot in slots] == [0, 1, 2]
+    assert len({round(slot["slot_angle_deg"], 1) for slot in slots}) == 3
+    assert all(slot["slot_radius_m"] < spec["capture_radius_m"] for slot in slots)
+    assert all(decision["source"] == "fast_encirclement" for decision in decisions)
+    assert len({tuple(decision["direction"][:2]) for decision in decisions}) == 3
+def test_pursuit_applies_explicit_speed_ratio_per_agent():
+    spec = parse_pursuit_request(
+        "UAV2-4追逐UAV1 UAV1速度更快 是别的1.5倍",
+        ["UAV_1", "UAV_2", "UAV_3", "UAV_4"],
+    )
+
+    assert spec["evader"] == "UAV_1"
+    assert spec["pursuers"] == ["UAV_2", "UAV_3", "UAV_4"]
+    assert spec["speed_mps_by_robot"]["UAV_1"] == 21.0
+    assert spec["evader_speed_mps"] == 21.0
+
+    positions = {
+        "UAV_1": [0, 0, -8],
+        "UAV_2": [20, 0, -8],
+        "UAV_3": [0, 20, -8],
+        "UAV_4": [-20, 0, -8],
+    }
+    velocities = {robot_id: [0, 0, 0] for robot_id in positions}
+    observation = build_local_observation("UAV_1", positions, velocities, spec)
+    decision = encirclement_motion_decision("UAV_1", observation, spec)
+
+    assert decision["speed_mps"] == 21.0
+def test_fast_pursuit_message_reports_hard_boundary():
+    spec = _spec()
+    spec["area_bounds"] = {
+        "north_min": -20,
+        "north_max": 30,
+        "east_min": 10,
+        "east_max": 70,
+    }
+    positions = {
+        "UAV_1": [0, 0, -8],
+        "UAV_2": [20, 0, -8],
+        "UAV_3": [0, 20, -8],
+        "UAV_4": [-20, 0, -8],
+    }
+    velocities = {robot_id: [0, 0, 0] for robot_id in positions}
+    observation = build_local_observation("UAV_2", positions, velocities, spec)
+    decision = encirclement_motion_decision("UAV_2", observation, spec)
+
+    assert "Hard boundary N=[-20.0, 30.0], E=[10.0, 70.0]" in decision["message"]
+def test_pursuit_parses_chinese_double_speed_suffix_phrase():
+    spec = parse_pursuit_request(
+        "UAV1-UAV3追逐UAV4 UAV4\u6709\u4e24\u500d\u901f\u5ea6",
+        ["UAV_1", "UAV_2", "UAV_3", "UAV_4"],
+    )
+
+    assert spec["evader"] == "UAV_4"
+    assert spec["pursuers"] == ["UAV_1", "UAV_2", "UAV_3"]
+    assert spec["speed_mps_by_robot"]["UAV_4"] == 28.0
+    assert spec["evader_speed_mps"] == 28.0

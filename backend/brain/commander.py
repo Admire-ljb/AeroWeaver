@@ -10,7 +10,7 @@ from brain.uav_agent_context import normalize_robot_id
 from brain.pursuit_mission import (
     build_pursuit_initialization,
     normalize_area_bounds,
-    parse_pursuit_request,
+    parse_pursuit_spec,
 )
 
 
@@ -84,7 +84,24 @@ For a mission, return JSON only:
   ],
   "assignments":[
     {{"robot_id":"UAV_1","task":"specific executable subtask","coordination_peers":["UAV_2"]}}
-  ]
+  ],
+  "scenario":{{
+    "type":"generic",
+    "pursuers":[],
+    "evader":"",
+    "pursuer_speed_mps":14,
+    "evader_speed_mps":9,
+    "speed_ratio_by_robot":{{}},
+    "speed_mps_by_robot":{{}},
+    "capture_radius_m":6,
+    "max_rounds":16,
+    "decision_interval_s":0.75,
+    "communication_range_m":55,
+    "sensor_range_m":85,
+    "collision_radius_m":5,
+    "required_capture_agents":2,
+    "fast_tactical":true
+  }}
 }}
 
 Mission rules:
@@ -96,6 +113,9 @@ Mission rules:
 - Keep per-UAV movement distances equal or approximately equal; the runtime will rescale translational paths to the shared budget.
 - Choose 2-5 measurable, task-relevant metrics. measurement should use one of: coverage_pct, completion_pct, active_uavs, communication_links, communication_health_pct, minimum_separation_m, distance_balance_pct, world_steps.
 - Define 2-5 concrete completion conditions before execution begins and set max_world_steps as a hard timeout.
+- First classify the operator request and encode all task semantics in the structured JSON above; Python will not infer mission roles or speed phrases from the original text.
+- For a pursuit task set scenario.type to pursuit, list exact available UAV IDs in pursuers and evader, and put explicit speed meaning in speed_ratio_by_robot or speed_mps_by_robot.
+- For example, “UAV1-UAV3 chase UAV4; UAV4 is twice as fast” means speed_ratio_by_robot={{"UAV_4":2.0}} and speed_mps_by_robot={{"UAV_4":28.0}} when pursuer_speed_mps is 14.
 - A pursuit task must identify pursuers and an evader; capture distance is the completion condition and max_world_steps is the timeout condition.
 - Mission termination requires every active UAV agent to independently vote that these conditions and its own assignment are satisfied.
 - The operator_report must explain the task, starting distribution, success criteria, and chosen metrics. Do not mention internal skill counts.
@@ -107,10 +127,28 @@ Mission rules:
 """
 
 
+def _canonical_mission_robot_id(value, available_robot_ids) -> str:
+    """Accept both UAV1 and UAV_1 in model-produced initialization JSON."""
+    candidate = normalize_robot_id(value)
+    available = set(available_robot_ids or [])
+    if candidate in available:
+        return candidate
+    match = re.fullmatch(r"UAV_?(\d+)", candidate)
+    if match:
+        alias = f"UAV_{int(match.group(1))}"
+        if alias in available:
+            return alias
+    return candidate
+
+
 def _normalize_mission(parsed: dict, task: str, robot_states: dict, task_area=None) -> dict:
     robot_ids = sorted(robot_states)
-    pursuit_spec = parse_pursuit_request(task, robot_ids)
     area_bounds = normalize_area_bounds(task_area)
+    scenario_input = parsed.get("scenario") if isinstance(parsed.get("scenario"), dict) else {}
+    pursuit_spec = parse_pursuit_spec(scenario_input, robot_ids)
+    scenario_area = normalize_area_bounds(scenario_input.get("area_bounds"))
+    if area_bounds is None:
+        area_bounds = scenario_area
     if pursuit_spec and area_bounds:
         pursuit_spec["area_bounds"] = area_bounds
     if pursuit_spec:
@@ -163,11 +201,40 @@ def _normalize_mission(parsed: dict, task: str, robot_states: dict, task_area=No
 
     initialization = {}
     accepted_positions = []
-    proposed_initialization = (
-        build_pursuit_initialization(pursuit_spec)
-        if pursuit_spec
-        else parsed.get("initialization") or []
-    )
+    requested_initialization = parsed.get("initialization") or []
+    if isinstance(requested_initialization, dict):
+        requested_initialization = [requested_initialization]
+    if pursuit_spec:
+        # Keep explicit operator/LLM poses first, then fill only missing UAVs
+        # from the randomized pursuit layout. This makes a requested UAV1
+        # start pose authoritative while preserving safe defaults for peers.
+        randomized_initialization = build_pursuit_initialization(pursuit_spec)
+        requested_ids = set()
+        explicit_initialization = []
+        for item in requested_initialization:
+            if not isinstance(item, dict):
+                continue
+            robot_id = _canonical_mission_robot_id(item.get("robot_id"), robot_states)
+            raw_position = list(item.get("position") or [])
+            if robot_id not in pursuit_spec["participants"] or len(raw_position) < 3:
+                continue
+            try:
+                [float(value) for value in raw_position[:3]]
+            except (TypeError, ValueError):
+                continue
+            if robot_id in requested_ids:
+                continue
+            requested_ids.add(robot_id)
+            explicit_initialization.append({
+                "robot_id": robot_id,
+                "position": raw_position[:3],
+            })
+        proposed_initialization = explicit_initialization + [
+            item for item in randomized_initialization
+            if item.get("robot_id") not in requested_ids
+        ]
+    else:
+        proposed_initialization = requested_initialization
     for item in proposed_initialization:
         if not isinstance(item, dict):
             continue
@@ -267,7 +334,7 @@ def _normalize_mission(parsed: dict, task: str, robot_states: dict, task_area=No
             {
                 "id": "capture",
                 "description": (
-                    f"At least one pursuer comes within {pursuit_spec['capture_radius_m']:.1f} m "
+                    f"At least {pursuit_spec['required_capture_agents']} pursuers come within {pursuit_spec['capture_radius_m']:.1f} m "
                     f"of {pursuit_spec['evader']}."
                 ),
                 "measurement": "capture_distance_m",
@@ -384,13 +451,18 @@ def _normalize_mission(parsed: dict, task: str, robot_states: dict, task_area=No
             f"{robot_id} at {initialization[robot_id]}"
             for robot_id in robot_ids
         )
+        speed_profile = ", ".join(
+            f"{robot_id}={float(pursuit_spec.get('speed_mps_by_robot', {}).get(robot_id, pursuit_spec['evader_speed_mps'] if robot_id == pursuit_spec['evader'] else pursuit_spec['pursuer_speed_mps'])):.1f} m/s"
+            for robot_id in robot_ids
+        )
         operator_report = (
             f"Pursuit mission: {', '.join(pursuit_spec['pursuers'])} will pursue "
-            f"{pursuit_spec['evader']} from randomized start poses.\n"
+            f"{pursuit_spec['evader']} from the configured start poses.\n"
+            f"Speed profile: {speed_profile}\n"
             f"Initial UAV distribution: {distribution}\n"
             "Each UAV keeps an isolated context, exchanges state only over current local links, "
             "and maintains its chosen velocity until it turns or the mission terminates.\n"
-            f"Success: capture distance <= {pursuit_spec['capture_radius_m']:.1f} m. "
+            f"Success: at least {pursuit_spec['required_capture_agents']} pursuers within {pursuit_spec['capture_radius_m']:.1f} m. "
             f"Timeout: {pursuit_spec['max_world_steps']} agent world steps."
         )
     elif not operator_report:
@@ -460,9 +532,8 @@ def handle_global_input(
 
     raw = llm_client.chat(messages, temperature=0.4, max_tokens=1600)
     parsed = _extract_json(raw) or {}
-    pursuit_requested = parse_pursuit_request(user_input, robot_states)
     if conversation_only or (
-        parsed.get("type") == "chat" and not force_mission and not pursuit_requested
+        parsed.get("type") == "chat" and not force_mission
     ):
         reply = str(parsed.get("reply") or raw or "Commander is ready.").strip()
         return {"type": "chat", "reply": reply, "assignments": []}

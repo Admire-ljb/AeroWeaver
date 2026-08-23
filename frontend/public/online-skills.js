@@ -187,7 +187,9 @@
       button.addEventListener('click', openDialog)
       form.appendChild(button)
     }
-    button.textContent = tr('\u521b\u5efa\u53ef\u6267\u884c Skill', 'Create Executable Skill')
+    const label = tr('\u521b\u5efa\u53ef\u6267\u884c Skill', 'Create Executable Skill')
+    // The observer watches text-node changes too, so avoid triggering it with an identical write.
+    if (button.textContent !== label) button.textContent = label
   }
 
   const observer = new MutationObserver(ensureLauncher)
@@ -195,4 +197,3 @@
   window.addEventListener('storage', ensureLauncher)
   ensureLauncher()
 })()
-

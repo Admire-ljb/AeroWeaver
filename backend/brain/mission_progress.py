@@ -207,6 +207,31 @@ class MissionProgressTracker:
             }
             return self._snapshot_locked()
 
+    def reset_for_scene(self, mission_id: str) -> dict:
+        """Clear counters when the server begins a new guarded scene reset."""
+        with self._lock:
+            if str(mission_id) != self._mission.get("mission_id"):
+                return self._snapshot_locked()
+            self._mission["world_step"] = 0
+            self._mission["round_index"] = 0
+            self._mission["status"] = "initializing"
+            self._mission["termination_consensus"] = False
+            self._mission.pop("latest_evidence", None)
+            for agent in self._mission.get("agents", {}).values():
+                agent.update({
+                    "status": "initializing",
+                    "decision_count": 0,
+                    "planned_distance_m": 0.0,
+                    "moved_distance_m": 0.0,
+                    "success": None,
+                    "position": None,
+                    "termination_vote": None,
+                    "termination_reason": "",
+                    "termination_evidence": [],
+                    "unmet_conditions": [],
+                })
+            return self._snapshot_locked()
+
     def mission_id(self) -> str:
         with self._lock:
             return str(self._mission.get("mission_id") or "")

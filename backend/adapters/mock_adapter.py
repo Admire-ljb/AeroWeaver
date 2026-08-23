@@ -104,6 +104,69 @@ class MockAdapter(SimAdapter):
         values[1] = _clamp(values[1], bounds["east_min"], bounds["east_max"])
         return values, [values[0] != original[0], values[1] != original[1]]
 
+    def _guard_velocity_locked(self, robot_id: str, command) -> tuple[list[float], dict]:
+        """Block outward N/E velocity near the active hard mission boundary."""
+        values = [float(value) for value in list(command)[:3]]
+        values = (values + [0.0, 0.0, 0.0])[:3]
+        bounds = self._operating_bounds
+        if not bounds or (self._bounded_robot_ids and str(robot_id) not in self._bounded_robot_ids):
+            return values, {}
+        state = self._state_for_locked(str(robot_id))
+        position = list(state["position"])
+        spans = (
+            bounds["north_max"] - bounds["north_min"],
+            bounds["east_max"] - bounds["east_min"],
+        )
+        margin = min(10.0, max(3.0, min(spans) * 0.12))
+        distances = {
+            "north_min": position[0] - bounds["north_min"],
+            "north_max": bounds["north_max"] - position[0],
+            "east_min": position[1] - bounds["east_min"],
+            "east_max": bounds["east_max"] - position[1],
+        }
+        outside = [edge for edge, distance in distances.items() if distance < 0.0]
+        near = [edge for edge, distance in distances.items() if 0.0 <= distance <= margin]
+        adjusted = list(values)
+        blocked_axes = []
+        if position[0] <= bounds["north_min"] + margin and adjusted[0] < 0.0:
+            adjusted[0] = 0.0
+            blocked_axes.append("north_min")
+        elif position[0] >= bounds["north_max"] - margin and adjusted[0] > 0.0:
+            adjusted[0] = 0.0
+            blocked_axes.append("north_max")
+        if position[1] <= bounds["east_min"] + margin and adjusted[1] < 0.0:
+            adjusted[1] = 0.0
+            blocked_axes.append("east_min")
+        elif position[1] >= bounds["east_max"] - margin and adjusted[1] > 0.0:
+            adjusted[1] = 0.0
+            blocked_axes.append("east_max")
+        status = "outside" if outside else "warning" if near else "safe"
+        nearest_edge = min(distances, key=distances.get)
+        nearest_distance = round(float(distances[nearest_edge]), 3)
+        warning = ""
+        if outside:
+            warning = (
+                f"OUTSIDE hard mission boundary at {', '.join(outside)}; "
+                "outward velocity blocked."
+            )
+        elif near:
+            warning = (
+                f"Boundary warning: {nearest_edge} is only "
+                f"{max(0.0, nearest_distance):.1f} m away."
+            )
+        if blocked_axes:
+            warning = f"{warning} Outward velocity blocked on {', '.join(blocked_axes)}.".strip()
+        return adjusted, {
+            "boundary_status": status,
+            "boundary_warning": bool(warning),
+            "boundary_message": warning,
+            "boundary_nearest_edge": nearest_edge,
+            "boundary_distance_m": nearest_distance,
+            "boundary_blocked_axes": blocked_axes,
+            "boundary_requested_velocity": values,
+        }
+
+
     def _ensure_physics_thread(self):
         with self._state_lock:
             if self._physics_thread and self._physics_thread.is_alive():
@@ -605,6 +668,7 @@ class MockAdapter(SimAdapter):
             return ActionResult(False, "Not connected")
         command = [float(north), float(east), float(down)]
         with self._physics_condition:
+            command, boundary_info = self._guard_velocity_locked(str(robot_id), command)
             state = self._state_for_locked(str(robot_id))
             state["motion_seq"] += 1
             state["target"] = None
@@ -623,7 +687,12 @@ class MockAdapter(SimAdapter):
         return ActionResult(
             True,
             "persistent NED velocity accepted (mock dynamics)",
-            {"velocity_ned": command, "position": position, "persistent": True},
+            {
+                "velocity_ned": command,
+                "position": position,
+                "persistent": True,
+                **boundary_info,
+            },
             self._dynamics.dt,
         )
 

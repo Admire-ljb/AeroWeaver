@@ -234,3 +234,24 @@ def test_teleport_skill_is_rejected_outside_scene_reset(monkeypatch):
     assert not rejected.success
     assert accepted.success
     assert calls == [("UAV_1", [1.0, 2.0, -5.0], True)]
+
+def test_scene_reset_clears_world_step_and_agent_counters():
+    tracker = MissionProgressTracker()
+    tracker.start(
+        "mission-1",
+        "Pursuit",
+        "Encircle",
+        [{"robot_id": "UAV_1", "task": "pursue"}],
+        [],
+        10,
+    )
+    tracker.record_decision("mission-1", "UAV_1")
+    tracker.record_result("mission-1", "UAV_1", True, 5, "moved")
+    assert tracker.snapshot()["world_step"] == 1
+
+    snapshot = tracker.reset_for_scene("mission-1")
+
+    assert snapshot["world_step"] == 0
+    assert snapshot["round_index"] == 0
+    assert snapshot["agents"][0]["decision_count"] == 0
+    assert snapshot["agents"][0]["moved_distance_m"] == 0.0

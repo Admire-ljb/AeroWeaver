@@ -134,6 +134,12 @@ export function useSocket() {
     socket.on('commander_progress', (data) => {
       if (data && typeof data === 'object') setCommanderProgress(data)
     })
+    socket.on('uav_agent_snapshot', (data) => {
+      const messages = Array.isArray(data?.messages)
+        ? data.messages.filter(message => message?.id && message?.robot_id)
+        : []
+      setAgentMessages(messages.slice(-500))
+    })
     socket.on('uav_agent_message', (data) => {
       if (!data?.id || !data?.robot_id) return
       setAgentMessages(prev => {

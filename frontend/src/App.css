@@ -100,6 +100,8 @@
 .header-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
   gap: 12px;
   color: rgba(225, 238, 252, 0.88);
   font-size: 16px;
@@ -119,6 +121,49 @@
 .mini-action.danger {
   border-color: rgba(255, 103, 103, 0.52);
   background: rgba(148, 31, 38, 0.5);
+}
+
+.operation-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(82, 178, 255, 0.38);
+  border-radius: 5px;
+  background: rgba(4, 18, 34, 0.76);
+}
+
+.operation-mode-toggle button {
+  min-width: 54px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(225, 238, 252, 0.72);
+  font-weight: 700;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.operation-mode-toggle button:hover {
+  color: #ffffff;
+  background: rgba(68, 151, 209, 0.24);
+}
+
+.operation-mode-toggle button.active.manual {
+  color: #061927;
+  background: #71d39d;
+}
+
+.operation-mode-toggle button.active.autonomous {
+  color: #061927;
+  background: #55b9ec;
+}
+
+.operation-mode-toggle button:focus-visible {
+  outline: 2px solid #f2ac23;
+  outline-offset: 2px;
 }
 
 .language-toggle {
@@ -2678,7 +2723,7 @@ button.status-card {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 980px) {
   .mission-header {
     height: auto;
     min-height: 96px;
@@ -2687,6 +2732,17 @@ button.status-card {
     gap: 10px;
     padding: 14px;
   }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 760px) {
 
   .brand-lockup h1 {
     font-size: 22px;

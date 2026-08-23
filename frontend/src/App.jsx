@@ -18,6 +18,7 @@ import './App.css'
 const API_BASE = window.location.protocol + '//' + window.location.host
 const DEFAULT_LANGUAGE = 'en'
 const MAX_UAV_COUNT = 10
+const TERMINAL_MISSION_STATUSES = new Set(['idle', 'complete', 'partial', 'cancelled', 'timeout'])
 
 function textFor(language, zh, en) {
   return language === 'zh' ? zh : en
@@ -658,7 +659,7 @@ function LanguageToggle({ language, onChange }) {
   )
 }
 
-function MissionHeader({ connected, systemStatus, taskActive, now, language, onLanguageChange, onInit, onStop }) {
+function MissionHeader({ connected, systemStatus, taskActive, now, language, onLanguageChange, onInit, onStop, onSetMode }) {
   const t = (zh, en) => textFor(language, zh, en)
   return (
     <header className="mission-header">
@@ -682,6 +683,24 @@ function MissionHeader({ connected, systemStatus, taskActive, now, language, onL
         {taskActive && (
           <button className="mini-action danger" onClick={onStop}>{t('停止任务', 'Stop Mission')}</button>
         )}
+        <div className="operation-mode-toggle" role="group" aria-label={t('控制模式', 'Control mode')}>
+          <button
+            type="button"
+            className={systemStatus.mode === 'manual' ? 'active manual' : 'manual'}
+            aria-pressed={systemStatus.mode === 'manual'}
+            onClick={() => onSetMode('manual')}
+          >
+            {t('手动', 'Manual')}
+          </button>
+          <button
+            type="button"
+            className={systemStatus.mode === 'ai' ? 'active autonomous' : 'autonomous'}
+            aria-pressed={systemStatus.mode === 'ai'}
+            onClick={() => onSetMode('ai')}
+          >
+            {t('自主', 'Autonomous')}
+          </button>
+        </div>
         <LanguageToggle language={language} onChange={onLanguageChange} />
         <span className={`link-state ${connected ? 'online' : 'offline'}`}>
           {connected ? t('链路在线', 'Link Online') : t('链路离线', 'Link Offline')}
@@ -2840,6 +2859,13 @@ export default function App() {
   const currentSkillRobotAvailable = Boolean(skillUav?.canExecute && worldState?.robots?.[currentSkillRobot])
   const currentSkillRobotExecuting = Array.isArray(systemStatus.executing_robots)
     && systemStatus.executing_robots.includes(currentSkillRobot)
+  const taskActive = Boolean(
+    systemStatus.is_executing
+    || (
+      commanderProgress?.mission_id
+      && !TERMINAL_MISSION_STATUSES.has(commanderProgress.status)
+    )
+  )
 
   useEffect(() => {
     if (!liveWorldUavCount || fleetSync.status === 'syncing') return
@@ -2919,6 +2945,12 @@ ${areaContext}` : text
         }
       : null
     sendChat(preparedText, inputMode, text, 'COMMANDER', { task_area: taskArea })
+  }
+
+  const handleSetMode = (nextMode) => {
+    if (nextMode === systemStatus.mode) return
+    if (nextMode === 'manual' && taskActive) stopExecution()
+    setMode(nextMode)
   }
 
   const activateUav = (uav, openMenu = false) => {
@@ -3130,18 +3162,13 @@ ${areaContext}` : text
       <MissionHeader
         connected={connected}
         systemStatus={systemStatus}
-        taskActive={Boolean(
-          systemStatus.is_executing
-          || (
-            commanderProgress?.mission_id
-            && !['idle', 'complete', 'partial', 'cancelled', 'timeout'].includes(commanderProgress.status)
-          )
-        )}
+        taskActive={taskActive}
         now={now}
         language={language}
         onLanguageChange={setLanguage}
         onInit={initSystem}
         onStop={stopExecution}
+        onSetMode={handleSetMode}
       />
 
       <main className="mission-main">
@@ -3292,19 +3319,13 @@ ${areaContext}` : text
             onShowSkill={() => openSkillVisualizer(skillUav)}
             onSelectSensor={(sensor) => openSensor(skillUav, sensor)}
             onOpenCockpit={(view) => openCockpit(view || activeSensor?.sensor || 'front')}
-            onSetMode={setMode}
+            onSetMode={handleSetMode}
             onCloseSkill={closeSkillVisualizer}
           />
           <TaskComposer
             language={language}
             disabled={!systemStatus.initialized}
-            taskActive={Boolean(
-              systemStatus.is_executing
-              || (
-                commanderProgress?.mission_id
-                && !['idle', 'complete', 'partial', 'cancelled', 'timeout'].includes(commanderProgress.status)
-              )
-            )}
+            taskActive={taskActive}
             onSubmit={submitMission}
             onStop={stopExecution}
             taskArea={selectedTaskArea}

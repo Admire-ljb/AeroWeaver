@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AeroSkill: Three Core Innovations</title>
+  <style>
+    :root {
+      --ink: #10243d;
+      --muted: #56677b;
+      --line: #cfdae5;
+      --soft: #f5f8fb;
+      --teal: #087e83;
+      --amber: #b97809;
+      --red: #ae4741;
+      --green: #29835c;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 1600px; height: 900px; overflow: hidden; background: #fff; }
+    body { color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
+    .figure { width: 1600px; height: 900px; padding: 38px 48px 30px; background: #fff; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 40px; }
+    h1 { margin: 0; font-size: 39px; line-height: 1.08; font-weight: 780; letter-spacing: 0; }
+    .lead { width: 590px; margin: 0 0 3px; color: var(--muted); font-size: 16px; line-height: 1.4; text-align: right; }
+    .header-rule { height: 2px; margin: 18px 0 20px; background: var(--ink); }
+    .panels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; height: 738px; }
+    .panel {
+      --accent: var(--teal);
+      display: grid;
+      grid-template-rows: auto auto 305px 1fr;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-top: 6px solid var(--accent);
+      background: #fff;
+    }
+    .panel.amber { --accent: var(--amber); }
+    .panel.red { --accent: var(--red); }
+    .heading { padding: 18px 20px 10px; }
+    .title-row { display: flex; align-items: baseline; gap: 10px; }
+    .num { flex: 0 0 auto; color: var(--accent); font-size: 29px; line-height: 1; font-weight: 820; }
+    h2 { margin: 0; font-size: 24px; line-height: 1.12; font-weight: 760; }
+    .problem-label { display: block; margin-top: 13px; color: var(--accent); font-size: 10px; line-height: 1; font-weight: 800; letter-spacing: 1.2px; }
+    .problem { margin: 6px 0 0; color: var(--muted); font-size: 15px; line-height: 1.32; }
+    .mechanism {
+      margin: 0 20px 16px;
+      padding: 13px 14px 12px;
+      border: 1px solid #d7e0e9;
+      background: var(--soft);
+    }
+    .mechanism-label { margin-bottom: 11px; color: var(--ink); font-size: 11px; font-weight: 800; letter-spacing: .8px; }
+    .flow { display: flex; align-items: stretch; justify-content: center; gap: 6px; min-height: 76px; }
+    .box {
+      min-width: 0;
+      padding: 9px 7px;
+      border: 1.5px solid var(--accent);
+      background: #fff;
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.23;
+      font-weight: 700;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .box small { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.2; font-weight: 600; }
+    .box.final { color: #fff; background: var(--accent); }
+    .box.final small { color: rgba(255,255,255,.82); }
+    .arrow { align-self: center; color: var(--accent); font-size: 20px; font-weight: 700; }
+    .package-flow .box { flex: 1 1 0; }
+    .mcsa-flow .box { flex: 1 1 0; padding-left: 5px; padding-right: 5px; }
+    .mcsa-flow .box.gate { flex: 1.15 1 0; }
+    .checks { margin-top: 5px; color: var(--muted); font-size: 9px; line-height: 1.35; text-align: left; }
+    .lifecycle {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      align-items: center;
+      gap: 7px;
+      padding-top: 3px;
+    }
+    .life-state { z-index: 1; padding: 10px 3px; border: 1.5px solid var(--accent); background: #fff; font-size: 11px; font-weight: 750; text-align: center; }
+    .life-state.approved { color: #fff; border-color: var(--green); background: var(--green); }
+    .life-state.deprecated { border-style: dashed; color: var(--red); }
+    .life-arrow { position: absolute; left: 10%; right: 10%; top: 25px; border-top: 2px solid var(--accent); }
+    .life-note { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 9px; color: var(--muted); font-size: 9px; line-height: 1.3; }
+    .life-note span { padding-top: 5px; border-top: 1px solid var(--line); }
+    .evidence {
+      min-height: 0;
+      margin: 0 20px;
+      border: 1px solid #aebdcb;
+      background: #071727;
+      overflow: hidden;
+      position: relative;
+    }
+    .evidence-label {
+      position: absolute;
+      z-index: 3;
+      left: 10px;
+      top: 10px;
+      padding: 5px 7px;
+      color: #fff;
+      background: rgba(8, 28, 48, .88);
+      border-left: 3px solid var(--accent);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .8px;
+    }
+    .crop { position: absolute; inset: 0; overflow: hidden; }
+    .crop img { position: absolute; max-width: none; display: block; }
+    .skill-crop img { width: 205%; left: -105%; top: -3%; }
+    .capability-crop img { width: 201%; left: -101%; top: -2%; }
+    .dual { display: grid; grid-template-columns: 1.12fr .88fr; gap: 3px; background: #fff; }
+    .dual .crop { position: relative; min-width: 0; }
+    .map-crop img { height: 100%; left: -2%; top: 0; }
+    .log-crop img { height: 100%; right: -1%; top: 0; }
+    .callout {
+      position: absolute;
+      z-index: 4;
+      bottom: 10px;
+      padding: 6px 8px;
+      border: 1px solid rgba(255,255,255,.3);
+      color: #fff;
+      background: rgba(5, 22, 38, .88);
+      font-size: 10px;
+      line-height: 1.2;
+      font-weight: 700;
+    }
+    .callout.left { left: 10px; }
+    .callout.right { right: 10px; }
+    .takeaway {
+      margin: 14px 20px 18px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.38;
+    }
+    .takeaway strong { color: var(--ink); }
+    .acronym { color: var(--accent); font-weight: 800; }
+  </style>
+</head>
+<body>
+  <main class="figure">
+    <header>
+      <h1>AeroSkill: Three Core Innovations</h1>
+      <p class="lead">Mechanisms first, runtime evidence second: each contribution defines a distinct governance boundary for reusable UAV skills.</p>
+    </header>
+    <div class="header-rule"></div>
+    <section class="panels">
+      <article class="panel">
+        <div class="heading">
+          <div class="title-row"><span class="num">01</span><h2>Governed Skill Package</h2></div>
+          <span class="problem-label">PROBLEM</span>
+          <p class="problem">A bare callable action does not expose when it is applicable or whether its output can be trusted.</p>
+        </div>
+        <div class="mechanism">
+          <div class="mechanism-label">CORE MECHANISM</div>
+          <div class="flow package-flow">
+            <div class="box">Semantics<small>description + metadata</small></div><div class="arrow">+</div>
+            <div class="box">Typed Contract<small>inputs + preconditions</small></div><div class="arrow">+</div>
+            <div class="box">Validator<small>bounded output</small></div><div class="arrow">→</div>
+            <div class="box final">Governed Skill<small>whitelisted executor</small></div>
+          </div>
+        </div>
+        <div class="evidence">
+          <span class="evidence-label">PROJECT EVIDENCE</span>
+          <div class="crop skill-crop"><img src="world-captures/01-governed-skill-library.png" alt="AeroWeaver registered skill package view" /></div>
+          <span class="callout left">Registered, inspectable capability</span>
+        </div>
+        <p class="takeaway"><strong>What changes:</strong> the unit of reuse becomes a governed package, not an opaque function or generated program.</p>
+      </article>
+      <article class="panel amber">
+        <div class="heading">
+          <div class="title-row"><span class="num">02</span><h2>Mission-Conditioned Activation</h2></div>
+          <span class="problem-label">PROBLEM</span>
+          <p class="problem">A semantically relevant skill may still be unapproved, incompatible with the platform, or invalid for the current state.</p>
+        </div>
+        <div class="mechanism">
+          <div class="mechanism-label">CORE MECHANISM · <span class="acronym">MCSA</span></div>
+          <div class="flow mcsa-flow">
+            <div class="box">Mission + State<small>q, s<sub>t</sub>, platform</small></div><div class="arrow">→</div>
+            <div class="box gate">Eligibility Gate<div class="checks">✓ approved<br>✓ compatible<br>✓ state-ready</div></div><div class="arrow">→</div>
+            <div class="box">Eligible-Only Rank<small>registered skill IDs</small></div><div class="arrow">→</div>
+            <div class="box final">Validated Swarm<small>safe runtime path</small></div>
+          </div>
+        </div>
+        <div class="evidence dual">
+          <span class="evidence-label">PROJECT EVIDENCE</span>
+          <div class="crop map-crop"><img src="world-captures/02-mcsa-runtime-orchestration.png" alt="Six-UAV formation in AeroWeaver" /></div>
+          <div class="crop log-crop"><img src="world-captures/02-mcsa-runtime-orchestration.png" alt="AeroWeaver execution receipt" /></div>
+          <span class="callout left">Six-UAV world state</span><span class="callout right">Registered skill receipt</span>
+        </div>
+        <p class="takeaway"><strong>What changes:</strong> activation is conditioned on executable applicability before the workflow reaches the swarm.</p>
+      </article>
+      <article class="panel red">
+        <div class="heading">
+          <div class="title-row"><span class="num">03</span><h2>Evidence-Gated Evolution</h2></div>
+          <span class="problem-label">PROBLEM</span>
+          <p class="problem">New or degraded capabilities must not silently enter or remain in the approved skill library.</p>
+        </div>
+        <div class="mechanism">
+          <div class="mechanism-label">CORE MECHANISM · <span class="acronym">EGSE</span></div>
+          <div class="lifecycle">
+            <div class="life-arrow"></div><div class="life-state">Candidate</div><div class="life-state">Review</div><div class="life-state approved">Approved</div><div class="life-state deprecated">Deprecated</div>
+          </div>
+          <div class="life-note"><span>Admission requires test and review evidence.</span><span>Regression evidence can remove approval.</span></div>
+        </div>
+        <div class="evidence">
+          <span class="evidence-label">PROJECT EVIDENCE</span>
+          <div class="crop capability-crop"><img src="world-captures/03-evidence-gated-evolution.png" alt="AeroWeaver capability review and promotion interface" /></div>
+          <span class="callout left">Review · Promote · Health Check</span>
+        </div>
+        <p class="takeaway"><strong>What changes:</strong> library growth and retirement become explicit, evidence-backed lifecycle transitions.</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

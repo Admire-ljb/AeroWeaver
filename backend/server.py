@@ -3362,6 +3362,7 @@ def on_connect():
         socketio.emit("system_status", _get_system_status(), to=sid)
         socketio.emit("world_state", state.get_world_snapshot(), to=sid)
         socketio.emit("uav_comm_links", {"mission_id": "", "links": state.agent_contexts.links()}, to=sid)
+        socketio.emit("uav_agent_snapshot", state.agent_contexts.snapshot(), to=sid)
         _emit_commander_progress(sid)
         if state.robot_registries:
             socketio.emit("skill_catalog", _get_skill_catalog(), to=sid)
@@ -4061,6 +4062,7 @@ def _configure_mission_operating_bounds(task_area, robot_ids):
 def _initialize_mission_scene(initialization, mission_id, sid):
     from skills.scenario_skills import scene_reset_window
 
+    state.mission_progress.reset_for_scene(mission_id)
     with scene_reset_window(mission_id):
         for item in initialization:
             robot_id = normalize_robot_id(item.get("robot_id"))
@@ -4223,9 +4225,17 @@ def _sync_pursuit_world(adapter, participants) -> tuple[dict, dict]:
 
 
 def _decide_pursuit_motion(robot_id, observation, scenario, previous_direction, round_index):
-    from brain.pursuit_mission import motion_decision_prompt, parse_motion_decision
+    from brain.pursuit_mission import encirclement_motion_decision, motion_decision_prompt, parse_motion_decision
     from llm_client import get_client
 
+    if scenario.get("fast_tactical"):
+        decision = encirclement_motion_decision(robot_id, observation, scenario)
+        state.agent_contexts.append_history(
+            robot_id,
+            "assistant",
+            f"[Pursuit world round {round_index}] {decision['message']}",
+        )
+        return decision
     prompt = motion_decision_prompt(robot_id, observation, scenario, previous_direction)
     try:
         with state.agent_contexts.conversation_lock(robot_id):
@@ -4392,6 +4402,7 @@ def _run_pursuit_mission(assignments, scenario, sid, mission_id):
             for robot_id in participants:
                 decision = decisions[robot_id]
                 direction = decision["direction"]
+                result = None
                 changed = direction_changed(previous_directions.get(robot_id), direction)
                 if changed:
                     result = UAVAgentRuntime(state.runtime, robot_id).dispatch_skill({
@@ -4408,6 +4419,26 @@ def _run_pursuit_mission(assignments, scenario, sid, mission_id):
                 else:
                     round_success[robot_id] = True
 
+                boundary_output = (
+                    result.output
+                    if result is not None and isinstance(result.output, dict)
+                    else {}
+                )
+                boundary_message = str(boundary_output.get("boundary_message") or "").strip()
+                boundary_suffix = ""
+                if boundary_output.get("boundary_warning"):
+                    boundary_suffix = f"; {boundary_message}"
+                    state.push_log(
+                        "warn",
+                        f"{robot_id} boundary warning: {boundary_message}",
+                        {
+                            "intent": "boundary_warning",
+                            "mission_id": mission_id,
+                            "robot_id": robot_id,
+                            "boundary": boundary_output,
+                        },
+                    )
+
                 planned_distance = decision["speed_mps"] * decision_interval
                 state.mission_progress.record_plan(mission_id, robot_id, planned_distance)
                 state.agent_contexts.update_task(
@@ -4419,6 +4450,7 @@ def _run_pursuit_mission(assignments, scenario, sid, mission_id):
                     f"Round {round_index}: {decision['message']} Direction={direction[:2]}, "
                     f"speed={decision['speed_mps']:.1f} m/s"
                     + ("; maintaining previous velocity." if not changed else "; steering updated.")
+                    + boundary_suffix
                 )
                 _send_agent_network_message(
                     robot_id,

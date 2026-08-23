@@ -134,7 +134,10 @@ class SteerVelocity(Skill):
             north = float(direction[0])
             east = float(direction[1])
             down = float(direction[2]) if len(direction) > 2 else 0.0
-            speed = min(max(float(input_data.get("speed_mps", 5.0)), 0.0), 12.0)
+            # The mission planner may assign a faster evader. Mock dynamics
+            # applies its own acceleration and velocity limits; this skill
+            # should not silently erase a valid per-UAV speed profile.
+            speed = min(max(float(input_data.get("speed_mps", 5.0)), 0.0), 30.0)
         except (TypeError, ValueError):
             return SkillResult(success=False, error_msg="direction and speed must be numeric")
 
@@ -157,9 +160,11 @@ class SteerVelocity(Skill):
         return SkillResult(
             success=bool(result.success),
             output={
-                "velocity_ned": [round(value, 4) for value in velocity],
+                "velocity_ned": list((result.data or {}).get("velocity_ned") or velocity),
+                "requested_velocity_ned": [round(value, 4) for value in velocity],
                 "persistent": bool(result.success),
                 "position": list((result.data or {}).get("position") or []),
+                **dict(result.data or {}),
             },
             error_msg="" if result.success else result.message,
             cost_time=float(getattr(result, "duration", 0.0) or 0.0),

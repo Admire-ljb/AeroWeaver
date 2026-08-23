@@ -17,6 +17,17 @@ _RANGE_PATTERN = re.compile(
     re.I,
 )
 _UAV_PATTERN = re.compile(r"UAV[_\s-]?(\d+)", re.I)
+_SPEED_RATIO_PATTERN = re.compile(
+    r"UAV[_\s-]?(\d+)[^0-9\r\n]{0,40}?(?:速度|speed)"
+    r"[^0-9\r\n]{0,24}?(\d+(?:\.\d+)?)\s*(?:倍|x|times)",
+    re.I,
+)
+_SPEED_RATIO_SUFFIX_PATTERN = re.compile(
+    r"UAV[_\s-]?(\d+)[^0-9\r\n]{0,32}?"
+    r"(一|两|二|三|四|五|半|\d+(?:\.\d+)?)\s*倍"
+    r"[^0-9\r\n]{0,12}?(?:速度|speed)",
+    re.I,
+)
 
 
 def normalize_area_bounds(value) -> dict | None:
@@ -140,6 +151,41 @@ def parse_pursuit_request(text: str, available_robot_ids) -> dict | None:
 
     participants = pursuers + [evader]
     max_rounds = max(12, min(24, 12 + len(participants) * 2))
+    pursuer_speed_mps = 14.0
+    evader_speed_mps = 9.0
+    speed_mps_by_robot = {}
+    speed_matches = [
+        *_SPEED_RATIO_PATTERN.finditer(task),
+        *_SPEED_RATIO_SUFFIX_PATTERN.finditer(task),
+    ]
+    chinese_multipliers = {
+        "半": 0.5,
+        "一": 1.0,
+        "两": 2.0,
+        "二": 2.0,
+        "三": 3.0,
+        "四": 4.0,
+        "五": 5.0,
+    }
+    for match in speed_matches:
+        robot_id = f"UAV_{int(match.group(1))}"
+        if robot_id not in available:
+            continue
+        try:
+            raw_multiplier = str(match.group(2)).strip()
+            multiplier = (
+                chinese_multipliers[raw_multiplier]
+                if raw_multiplier in chinese_multipliers
+                else float(raw_multiplier)
+            )
+            multiplier = min(3.0, max(0.1, float(multiplier)))
+        except (TypeError, ValueError):
+            continue
+        # "X is 1.5x the others" uses the pursuer baseline as the common
+        # reference, which keeps the requested ratio visible in telemetry.
+        speed_mps_by_robot[robot_id] = round(pursuer_speed_mps * multiplier, 2)
+    if evader in speed_mps_by_robot:
+        evader_speed_mps = speed_mps_by_robot[evader]
     return {
         "type": "pursuit",
         "pursuers": pursuers,
@@ -148,13 +194,116 @@ def parse_pursuit_request(text: str, available_robot_ids) -> dict | None:
         "capture_radius_m": 6.0,
         "max_rounds": max_rounds,
         "max_world_steps": max_rounds * len(participants),
-        "decision_interval_s": 1.5,
-        "pursuer_speed_mps": 7.0,
-        "evader_speed_mps": 6.2,
+        "decision_interval_s": 0.75,
+        "pursuer_speed_mps": pursuer_speed_mps,
+        "evader_speed_mps": evader_speed_mps,
+        "speed_mps_by_robot": speed_mps_by_robot,
         "communication_range_m": 55.0,
         "sensor_range_m": 85.0,
         "collision_radius_m": 5.0,
+        "encirclement_radius_m": 4.5,
+        "required_capture_agents": 2,
+        "fast_tactical": True,
         "arena_radius_m": 75.0,
+    }
+
+
+def parse_pursuit_spec(value, available_robot_ids) -> dict | None:
+    """Validate structured pursuit parameters emitted by the Commander LLM."""
+    if not isinstance(value, dict):
+        return None
+    kind = str(value.get("type") or "").strip().lower()
+    if kind not in {"pursuit", "pursuit_evasion", "chase"}:
+        return None
+    available = {normalize_robot_id(item) for item in available_robot_ids or []}
+
+    def robot_id(raw):
+        candidate = normalize_robot_id(raw)
+        if candidate in available:
+            return candidate
+        match = re.fullmatch(r"UAV_?(\d+)", candidate)
+        alias = f"UAV_{int(match.group(1))}" if match else ""
+        return alias if alias in available else ""
+
+    evader = robot_id(value.get("evader"))
+    pursuers = []
+    for item in value.get("pursuers") or []:
+        candidate = robot_id(item)
+        if candidate and candidate != evader and candidate not in pursuers:
+            pursuers.append(candidate)
+    if not evader or not pursuers:
+        return None
+    participants = [*pursuers, evader]
+
+    def number(raw, default, minimum, maximum):
+        try:
+            parsed = float(raw)
+        except (TypeError, ValueError):
+            parsed = float(default)
+        return min(float(maximum), max(float(minimum), parsed))
+
+    pursuer_speed = number(value.get("pursuer_speed_mps"), 14.0, 0.1, 30.0)
+    evader_speed = number(value.get("evader_speed_mps"), 9.0, 0.1, 30.0)
+    speed_by_robot = {}
+    ratios = {}
+    raw_ratios = value.get("speed_ratio_by_robot") or {}
+    if isinstance(raw_ratios, dict):
+        for raw_robot, raw_ratio in raw_ratios.items():
+            candidate = robot_id(raw_robot)
+            if candidate not in participants:
+                continue
+            ratio = number(raw_ratio, 1.0, 0.1, 3.0)
+            ratios[candidate] = round(ratio, 3)
+            speed_by_robot[candidate] = round(pursuer_speed * ratio, 2)
+
+    raw_speeds = value.get("speed_mps_by_robot") or {}
+    if isinstance(raw_speeds, dict):
+        for raw_robot, raw_speed in raw_speeds.items():
+            candidate = robot_id(raw_robot)
+            if candidate not in participants:
+                continue
+            speed_by_robot[candidate] = round(number(raw_speed, 0.1, 0.1, 30.0), 2)
+
+    if evader in speed_by_robot:
+        evader_speed = speed_by_robot[evader]
+    elif "evader_speed_mps" in value:
+        speed_by_robot[evader] = round(evader_speed, 2)
+
+    max_rounds = int(round(number(value.get("max_rounds"), 16, 4, 48)))
+    decision_interval = number(value.get("decision_interval_s"), 0.75, 0.1, 3.0)
+    capture_radius = number(value.get("capture_radius_m"), 6.0, 1.0, 30.0)
+    communication_range = number(value.get("communication_range_m"), 55.0, 5.0, 500.0)
+    sensor_range = number(value.get("sensor_range_m"), 85.0, 5.0, 500.0)
+    collision_radius = number(value.get("collision_radius_m"), 5.0, 1.0, 20.0)
+    encirclement_radius = number(value.get("encirclement_radius_m"), 4.5, 1.0, 20.0)
+    required_capture_agents = int(round(number(
+        value.get("required_capture_agents"),
+        min(2, len(pursuers)),
+        1,
+        len(pursuers),
+    )))
+
+    return {
+        "type": "pursuit",
+        "pursuers": pursuers,
+        "evader": evader,
+        "participants": participants,
+        "capture_radius_m": round(capture_radius, 3),
+        "max_rounds": max_rounds,
+        "max_world_steps": max_rounds * len(participants),
+        "decision_interval_s": round(decision_interval, 3),
+        "pursuer_speed_mps": round(pursuer_speed, 2),
+        "evader_speed_mps": round(evader_speed, 2),
+        "speed_mps_by_robot": speed_by_robot,
+        "speed_ratio_by_robot": ratios,
+        "communication_range_m": round(communication_range, 2),
+        "sensor_range_m": round(sensor_range, 2),
+        "collision_radius_m": round(collision_radius, 2),
+        "encirclement_radius_m": round(encirclement_radius, 2),
+        "required_capture_agents": required_capture_agents,
+        "fast_tactical": bool(value.get("fast_tactical", True)),
+        "arena_radius_m": number(value.get("arena_radius_m"), 75.0, 10.0, 1000.0),
+        "area_bounds": normalize_area_bounds(value.get("area_bounds")),
     }
 
 
@@ -221,6 +370,66 @@ def pursuit_links(positions: dict, participants, communication_range_m: float) -
     return links
 
 
+def boundary_status(position, bounds, warning_margin_m=None) -> dict:
+    """Return agent-facing hard-boundary state and distances to each edge."""
+    area = normalize_area_bounds(bounds)
+    if not area:
+        return {
+            "status": "unbounded",
+            "near": False,
+            "outside": False,
+            "distances_m": {},
+            "warning": "",
+        }
+    point = _vector(position)
+    distances = {
+        "north_min": round(point[0] - area["north_min"], 3),
+        "north_max": round(area["north_max"] - point[0], 3),
+        "east_min": round(point[1] - area["east_min"], 3),
+        "east_max": round(area["east_max"] - point[1], 3),
+    }
+    spans = (
+        area["north_max"] - area["north_min"],
+        area["east_max"] - area["east_min"],
+    )
+    margin = (
+        float(warning_margin_m)
+        if warning_margin_m is not None
+        else min(10.0, max(3.0, min(spans) * 0.12))
+    )
+    outside_edges = [edge for edge, distance in distances.items() if distance < 0.0]
+    near_edges = [
+        edge for edge, distance in distances.items()
+        if 0.0 <= distance <= margin
+    ]
+    status = "outside" if outside_edges else "warning" if near_edges else "safe"
+    nearest_edge = min(distances, key=distances.get)
+    nearest_distance = round(distances[nearest_edge], 3)
+    if status == "outside":
+        warning = (
+            f"OUTSIDE hard mission boundary at {', '.join(outside_edges)}; "
+            "stop outward motion and return inside."
+        )
+    elif status == "warning":
+        warning = (
+            f"Boundary warning: {nearest_edge} is only {max(0.0, nearest_distance):.1f} m away; "
+            "turn inward before the next move."
+        )
+    else:
+        warning = ""
+    return {
+        "status": status,
+        "near": status == "warning",
+        "outside": status == "outside",
+        "margin_m": round(margin, 3),
+        "nearest_edge": nearest_edge,
+        "nearest_distance_m": nearest_distance,
+        "distances_m": distances,
+        "warning": warning,
+        "bounds": area,
+    }
+
+
 def build_local_observation(
     robot_id: str,
     positions: dict,
@@ -256,6 +465,10 @@ def build_local_observation(
         "capture_radius_m": float(spec.get("capture_radius_m", 5.0)),
         "arena_radius_m": float(spec.get("arena_radius_m", 75.0)),
         "area_bounds": normalize_area_bounds(spec.get("area_bounds")),
+        "boundary_status": boundary_status(
+            own_position,
+            spec.get("area_bounds"),
+        ),
     }
 
 
@@ -310,12 +523,167 @@ def tactical_direction(observation: dict, spec: dict) -> list[float]:
     return constrain_direction_to_area(
         own,
         direction,
-        float(spec.get("evader_speed_mps", 6.2) if role == "evader" else spec.get("pursuer_speed_mps", 7.0)),
-        float(spec.get("decision_interval_s", 1.5)),
+        _agent_speed_mps(observation, spec),
+        float(spec.get("decision_interval_s", 0.75)),
         spec.get("area_bounds"),
     )
 
 
+def _agent_speed_mps(observation: dict, spec: dict) -> float:
+    robot_id = str(observation.get("robot_id") or "")
+    overrides = spec.get("speed_mps_by_robot") or {}
+    if robot_id in overrides:
+        try:
+            return max(0.0, float(overrides[robot_id]))
+        except (TypeError, ValueError):
+            pass
+    role = str(observation.get("role") or "pursuer")
+    return max(
+        0.0,
+        float(
+            spec.get("evader_speed_mps", 6.2)
+            if role == "evader"
+            else spec.get("pursuer_speed_mps", 10.0)
+        ),
+    )
+
+
+def encirclement_slot(observation: dict, spec: dict) -> dict | None:
+    """Return this pursuer's moving slot around the predicted evader pose.
+
+    The slot assignment is deterministic from the pursuer ordering in the
+    mission spec. Every agent can reproduce its own slot from local sensing,
+    so no central step-by-step controller is needed. The slot radius is below
+    the capture radius while the angular spacing remains above the collision
+    radius for the usual three-pursuer task.
+    """
+    if str(observation.get("role") or "") != "pursuer":
+        return None
+    evader_id = str(spec.get("evader") or "")
+    observed = dict(observation.get("observed_uavs") or {})
+    target = observed.get(evader_id)
+    if not isinstance(target, dict):
+        return None
+
+    pursuers = [str(item) for item in spec.get("pursuers") or []]
+    robot_id = str(observation.get("robot_id") or "")
+    try:
+        slot_index = pursuers.index(robot_id)
+    except ValueError:
+        return None
+    count = max(1, len(pursuers))
+
+    target_position = _vector(target.get("position"))
+    target_velocity = _vector(target.get("velocity"))
+    interval = float(spec.get("decision_interval_s", 0.75))
+    lead_seconds = min(1.5, max(0.6, interval * 1.5))
+    predicted_target = [
+        target_position[0] + target_velocity[0] * lead_seconds,
+        target_position[1] + target_velocity[1] * lead_seconds,
+        target_position[2],
+    ]
+
+    velocity_heading = math.atan2(target_velocity[1], target_velocity[0])
+    if math.hypot(target_velocity[0], target_velocity[1]) < 0.2:
+        velocity_heading = 0.0
+    angle = velocity_heading + (2.0 * math.pi * slot_index / count)
+    radius = min(
+        float(spec.get("encirclement_radius_m", 4.5)),
+        max(2.5, float(spec.get("capture_radius_m", 6.0)) * 0.9),
+    )
+    slot = [
+        predicted_target[0] + radius * math.cos(angle),
+        predicted_target[1] + radius * math.sin(angle),
+        predicted_target[2],
+    ]
+    return {
+        "target_position": target_position,
+        "predicted_target": predicted_target,
+        "slot": slot,
+        "slot_index": slot_index,
+        "slot_count": count,
+        "slot_angle_deg": round(math.degrees(angle) % 360.0, 1),
+        "slot_radius_m": radius,
+    }
+
+
+def encirclement_direction(observation: dict, spec: dict) -> list[float]:
+    """Fast local policy: close on a predicted target while taking a ring slot."""
+    own = _vector(observation.get("position"))
+    slot_data = encirclement_slot(observation, spec)
+    if not slot_data:
+        return tactical_direction(observation, spec)
+
+    slot = slot_data["slot"]
+    desired = [slot[0] - own[0], slot[1] - own[1], 0.0]
+    target_velocity = _vector(
+        (observation.get("observed_uavs") or {}).get(str(spec.get("evader") or ""), {}).get("velocity")
+    )
+    # Carry the target's motion into the intercept vector so the ring follows
+    # a moving evader instead of repeatedly chasing its old position.
+    desired[0] += target_velocity[0] * 0.75
+    desired[1] += target_velocity[1] * 0.75
+
+    collision_radius = float(spec.get("collision_radius_m", 5.0))
+    safe_distance = collision_radius * 1.55
+    for peer_id, item in (observation.get("observed_uavs") or {}).items():
+        if peer_id == str(spec.get("evader") or "") or item.get("role") != "pursuer":
+            continue
+        distance = float(item.get("distance_m") or 0.0)
+        if 1e-6 < distance < safe_distance:
+            strength = (safe_distance - distance) / safe_distance
+            peer_position = _vector(item.get("position"))
+            desired[0] += (own[0] - peer_position[0]) / distance * strength * 7.0
+            desired[1] += (own[1] - peer_position[1]) / distance * strength * 7.0
+
+    return constrain_direction_to_area(
+        own,
+        _unit(desired),
+        _agent_speed_mps(observation, spec),
+        float(spec.get("decision_interval_s", 0.75)),
+        spec.get("area_bounds"),
+    )
+
+
+def encirclement_motion_decision(robot_id: str, observation: dict, spec: dict) -> dict:
+    """Build an immediate agent action without a blocking LLM round-trip."""
+    direction = encirclement_direction(observation, spec)
+    speed = _agent_speed_mps(observation, spec)
+    slot_data = encirclement_slot(observation, spec)
+    area = normalize_area_bounds(observation.get("area_bounds"))
+    boundary = observation.get("boundary_status") or boundary_status(
+        observation.get("position"),
+        area,
+    )
+    boundary_note = ""
+    if area:
+        boundary_note = (
+            f" Hard boundary N=[{area['north_min']:.1f}, {area['north_max']:.1f}], "
+            f"E=[{area['east_min']:.1f}, {area['east_max']:.1f}]; "
+            "all initialization and movement must remain inside."
+        )
+        if boundary.get("warning") or boundary.get("outside"):
+            boundary_note += f" WARNING: {boundary.get('warning')}"
+    if slot_data:
+        message = (
+            f"{robot_id} takes encirclement slot {slot_data['slot_index'] + 1}/"
+            f"{slot_data['slot_count']} at {slot_data['slot_angle_deg']:.0f} degrees; "
+            f"intercepting the predicted target position while keeping "
+            f"{slot_data['slot_radius_m']:.1f} m capture radius."
+            f"{boundary_note}"
+        )
+    else:
+        message = (
+            f"{robot_id} continues local pursuit toward the observed target."
+            f"{boundary_note}"
+        )
+    return {
+        "direction": [round(direction[0], 4), round(direction[1], 4), 0.0],
+        "speed_mps": round(speed, 3),
+        "message": message,
+        "request_states": list(observation.get("communicable_peers") or []),
+        "source": "fast_encirclement",
+    }
 def motion_decision_prompt(robot_id: str, observation: dict, spec: dict, previous_direction) -> str:
     """Prompt one UAV for its next local motion decision, not a global plan."""
     return f"""You are {robot_id}, one independent motion agent in a pursuit-evasion mission.
@@ -323,6 +691,9 @@ You may reason only from the supplied local observation and messages in your own
 Choose your own horizontal NED direction. Keep the previous direction when it remains useful;
 the vehicle will continue moving without another command until you deliberately turn or the mission ends.
 Communicate a concise state/intent update to locally reachable peers.
+The mission boundary is a hard physical constraint. If boundary_status is
+warning or outside, turn inward immediately and mention the warning in message.
+Never propose a direction that moves through the boundary.
 
 Return JSON only:
 {{"direction":[north,east],"message":"local observation and intended maneuver","request_states":["UAV_2"]}}
@@ -347,12 +718,16 @@ def parse_motion_decision(raw: str, observation: dict, spec: dict) -> dict:
             pass
 
     tactical = tactical_direction(observation, spec)
+    if spec.get("fast_tactical") and observation.get("role") == "pursuer":
+        tactical = encirclement_direction(observation, spec)
     raw_direction = parsed.get("direction")
     try:
         proposed = _unit([float(raw_direction[0]), float(raw_direction[1]), 0.0])
+        tactical_weight = 0.9 if spec.get("fast_tactical") else 0.65
+        model_weight = 1.0 - tactical_weight
         combined = _unit([
-            tactical[0] * 0.65 + proposed[0] * 0.35,
-            tactical[1] * 0.65 + proposed[1] * 0.35,
+            tactical[0] * tactical_weight + proposed[0] * model_weight,
+            tactical[1] * tactical_weight + proposed[1] * model_weight,
             0.0,
         ])
         source = "llm+tactical"
@@ -363,8 +738,8 @@ def parse_motion_decision(raw: str, observation: dict, spec: dict) -> dict:
     combined = constrain_direction_to_area(
         observation.get("position"),
         combined,
-        float(spec.get("evader_speed_mps", 6.2) if observation.get("role") == "evader" else spec.get("pursuer_speed_mps", 7.0)),
-        float(spec.get("decision_interval_s", 1.5)),
+        _agent_speed_mps(observation, spec),
+        float(spec.get("decision_interval_s", 0.75)),
         spec.get("area_bounds"),
     )
 
@@ -378,11 +753,13 @@ def parse_motion_decision(raw: str, observation: dict, spec: dict) -> dict:
     message = str(parsed.get("message") or "").strip()
     if not message:
         message = f"{observation.get('robot_id')} continuing {role} maneuver on local observation."
-    speed = (
-        float(spec.get("evader_speed_mps", 6.2))
-        if role == "evader"
-        else float(spec.get("pursuer_speed_mps", 7.0))
+    boundary = observation.get("boundary_status") or boundary_status(
+        observation.get("position"),
+        spec.get("area_bounds"),
     )
+    if boundary.get("warning") or boundary.get("outside"):
+        message = f"{boundary.get('warning')} {message}".strip()
+    speed = _agent_speed_mps(observation, spec)
     return {
         "direction": [round(combined[0], 4), round(combined[1], 4), 0.0],
         "speed_mps": round(speed, 3),
@@ -411,17 +788,23 @@ def evaluate_pursuit(positions: dict, spec: dict, *, round_index: int, world_ste
     }
     closest_id = min(distances, key=distances.get)
     closest_distance = distances[closest_id]
+    capture_radius = float(spec.get("capture_radius_m", 5.0))
+    captured_ids = [robot_id for robot_id, distance in distances.items() if distance <= capture_radius]
+    required_capture_agents = min(len(pursuers), max(1, int(spec.get("required_capture_agents", 1))))
     evidence = {
         "closest_pursuer": closest_id,
         "closest_distance_m": round(closest_distance, 2),
-        "capture_radius_m": float(spec.get("capture_radius_m", 5.0)),
+        "capture_radius_m": capture_radius,
+        "captured_pursuers": captured_ids,
+        "captured_count": len(captured_ids),
+        "required_capture_agents": required_capture_agents,
         "round_index": int(round_index),
         "world_step": int(world_step),
     }
-    if closest_distance <= float(spec.get("capture_radius_m", 5.0)):
+    if len(captured_ids) >= required_capture_agents:
         return {
             "status": "complete",
-            "reason": f"{closest_id} reached capture distance from {evader}.",
+            "reason": f"{len(captured_ids)} pursuers formed the capture envelope around {evader}.",
             "evidence": evidence,
         }
     if (
@@ -449,6 +832,8 @@ __all__ = [
     "motion_decision_prompt",
     "parse_motion_decision",
     "parse_pursuit_request",
+    "parse_pursuit_spec",
+    "boundary_status",
     "normalize_area_bounds",
     "position_inside_area",
     "pursuit_links",

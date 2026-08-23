@@ -1,6 +1,6 @@
 import json
 
-from brain.commander import handle_global_input
+from brain.commander import _normalize_mission, handle_global_input
 
 
 class FakeClient:
@@ -96,19 +96,34 @@ def test_commander_ignores_unknown_and_duplicate_robot_assignments():
     assert by_robot["UAV_2"]["task"].startswith("Search north.")
 
 
-def test_commander_turns_pursuit_text_into_randomized_agent_mission_even_if_llm_calls_it_chat():
-    client = FakeClient('{"type":"chat","reply":"Tell me more."}')
+def test_commander_uses_llm_structured_pursuit_parameters():
+    client = FakeClient(json.dumps({
+        "type": "mission",
+        "scenario": {
+            "type": "pursuit",
+            "pursuers": ["UAV_1", "UAV_2", "UAV_3"],
+            "evader": "UAV_4",
+            "pursuer_speed_mps": 14,
+            "speed_ratio_by_robot": {"UAV_4": 2.0},
+            "speed_mps_by_robot": {"UAV_4": 28.0},
+            "fast_tactical": True,
+        },
+        "assignments": [],
+    }))
     robots = {
         **_robots(),
         "UAV_4": {"position": [30, 0, -5], "battery": 84, "status": "idle"},
     }
 
-    result = handle_global_input("UAV1-3追逐UAV4", [], client, robots)
+    result = handle_global_input("UAV1-3追逐UAV4 UAV4有两倍速度", [], client, robots)
 
     assert result["type"] == "mission"
     assert result["scenario"]["type"] == "pursuit"
     assert result["scenario"]["pursuers"] == ["UAV_1", "UAV_2", "UAV_3"]
     assert result["scenario"]["evader"] == "UAV_4"
+    assert result["scenario"]["speed_mps_by_robot"]["UAV_4"] == 28.0
+    assert result["scenario"]["evader_speed_mps"] == 28.0
+    assert "speed_ratio_by_robot" in client.messages[0]["content"]
     assert [item["robot_id"] for item in result["assignments"]] == [
         "UAV_1", "UAV_2", "UAV_3", "UAV_4",
     ]
@@ -139,3 +154,29 @@ def test_commander_preserves_structured_task_area_as_hard_scenario_constraint():
         assert bounds["north_min"] <= north <= bounds["north_max"]
         assert bounds["east_min"] <= east <= bounds["east_max"]
     assert all("Hard mission boundary" in item["task"] for item in result["assignments"])
+
+def test_commander_preserves_explicit_pursuit_initialization_pose():
+    robots = {
+        "UAV_1": {"position": [0, 0, -5], "battery": 98, "status": "idle"},
+        "UAV_2": {"position": [10, 0, -5], "battery": 92, "status": "idle"},
+        "UAV_3": {"position": [20, 0, -5], "battery": 87, "status": "idle"},
+    }
+    result = _normalize_mission(
+        {
+            "scenario": {
+                "type": "pursuit",
+                "pursuers": ["UAV_2", "UAV_3"],
+                "evader": "UAV_1",
+            },
+            "assignments": [],
+            "initialization": [
+                {"robot_id": "UAV1", "position": [42, 7, -12]},
+            ],
+        },
+        "UAV2-3 chase UAV1",
+        robots,
+    )
+    positions = {item["robot_id"]: item["position"] for item in result["initialization"]}
+
+    assert positions["UAV_1"] == [42.0, 7.0, -12.0]
+    assert set(positions) == {"UAV_1", "UAV_2", "UAV_3"}
