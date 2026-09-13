@@ -30,7 +30,10 @@ Micro-XRCE-DDS-Agent/
 # Logs & temp
 *.log
 .pytest_cache/
+.pytest-*/
 .test-*/
+results/
+experiments/**/tmp*/
 data/
 doctor/memory/backups/
 *.bak

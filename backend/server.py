@@ -26,7 +26,7 @@ import secrets
 # Phase 0 refactor: removed doctor, device_manager, bootstrap modules
 import logging
 import requests
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
@@ -48,6 +48,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory, send_f
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from brain.uav_agent_context import UAVAgentContextStore, normalize_robot_id
+from memory.roles import infer_role
 from brain.mission_progress import MissionProgressTracker, balance_movement_plan
 from runtime.uav_agent_runtime import UAVAgentRuntime
 
@@ -58,6 +59,7 @@ logger = logging.getLogger(__name__)
 # ── 静态文件目录（React build 产物）────────────────────────────────────────────
 _FLEET_STATE_PATH = os.path.join(_PROJECT_ROOT, ".aeroweaver_fleet.json")
 _AIRSIM_POOL_SIZE = max(1, min(int(os.getenv("AEROWEAVER_AIRSIM_POOL_SIZE", "10")), 12))
+_AIRSIM_CAMERA_STREAM_STARTED = False
 
 
 def _load_persisted_fleet_count() -> int:
@@ -88,18 +90,28 @@ CORS(app, resources={r"/api/*": {"origins": "*"}, r"/socket.io/*": {"origins": "
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading",
                     allow_unsafe_werkzeug=True)
 
+
 AIRSIM_CAMERA_RELAY_URL = os.getenv(
     "AIRSIM_CAMERA_RELAY_URL",
     "http://127.0.0.1:8765",
 ).rstrip("/")
 AIRSIM_CAMERA_RELAY_ENABLED = (
-    os.getenv("AIRSIM_CAMERA_RELAY_ENABLED", "true").strip().lower()
+    os.getenv("AIRSIM_CAMERA_RELAY_ENABLED", "false").strip().lower()
     in {"1", "true", "yes", "on"}
     and bool(AIRSIM_CAMERA_RELAY_URL)
 )
 AIRSIM_RELAY_CHANNELS = frozenset(
     {"scene", "front", "rear", "left", "right", "down"}
 )
+
+
+def _pixel_streaming_config() -> dict:
+    """Return the camera relay settings exposed by adapter-status."""
+    return {
+        "enabled": bool(AIRSIM_CAMERA_RELAY_ENABLED),
+        "relay_url": AIRSIM_CAMERA_RELAY_URL if AIRSIM_CAMERA_RELAY_ENABLED else "",
+        "channels": sorted(AIRSIM_RELAY_CHANNELS),
+    }
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  全局状态
@@ -126,6 +138,7 @@ class AppState:
         self.runtime = None
         self.initialized: bool = False
         self.experience_store = None  # VectorStore 单例，用于经验检索
+        self.swarm_experience_memory = None  # Shared multi-UAV outcome/vote/trace memory
 
         # 传感器桥接
         self.sensor_bridge = None
@@ -197,10 +210,14 @@ class AppState:
         if not self.world_model:
             return {"robots": {}, "targets": []}
         state = self.world_model.get_world_state()
+        from adapters.adapter_manager import get_adapter
+        adapter = get_adapter()
+        task = getattr(adapter, "mock_task", None)
         return {
             "robots": state.get("robots", {}),
             "targets": state.get("targets", []),
             "timestamp": state.get("timestamp", 0),
+            "mock_task": task.snapshot() if task else None,
         }
 
 
@@ -230,6 +247,7 @@ AIRSIM_CAMERA_CANDIDATES = {
 AIRSIM_SCENE_CAMERA_CANDIDATES = [
     os.getenv("AIRSIM_SCENE_CAMERA"),
     os.getenv("AIRSIM_EXTERNAL_CAMERA"),
+    "OverviewCamera",
     "overview",
     "global",
     "scene",
@@ -493,6 +511,8 @@ _MOCK_SKILL_NAMES = frozenset({
     "run_python", "http_request", "read_file", "write_file",
     "report", "alert", "ask_user", "update_map", "create_composite_skill",
 })
+from sim.mock_tasks import SKILL_NAMES as _MOCK_TASK_SKILL_NAMES
+_MOCK_SKILL_NAMES = _MOCK_SKILL_NAMES | _MOCK_TASK_SKILL_NAMES
 
 _MOCK_HIDDEN_SENSOR_SKILLS = frozenset({
     "observe", "perceive", "detect_object", "recognize_speech",
@@ -501,7 +521,7 @@ _MOCK_HIDDEN_SENSOR_SKILLS = frozenset({
 
 
 def _skill_profile_name(adapter_name: str | None = None) -> str:
-    configured = str(adapter_name or os.getenv("SIM_ADAPTER", "px4")).strip().lower()
+    configured = str(adapter_name or os.getenv("SIM_ADAPTER", "mock")).strip().lower()
     return "mock" if configured == "mock" else "default"
 
 
@@ -566,6 +586,8 @@ def _build_robot_registry(
         ])
     else:
         ALL_SKILL_FACTORIES.append(SteerVelocity)
+        from skills.mock_task_skills import task_skill_factories
+        ALL_SKILL_FACTORIES.extend(task_skill_factories())
 
     reg = SkillRegistry(
         auto_generate_doc=False,
@@ -636,7 +658,7 @@ def _initial_robot_specs() -> list[tuple[str, str, list, float]]:
     Mock mode is used by the demo UI, so it starts with a visible multi-UAV
     formation. Real adapters stay single-UAV unless explicitly configured.
     """
-    sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
+    sim_adapter = os.getenv("SIM_ADAPTER", "mock").lower()
     if sim_adapter in ("airsim", "airsim_physics", "mock"):
         count = state._desired_airsim_fleet_count
     else:
@@ -719,6 +741,10 @@ def _do_init():
         # ── 记忆模块 ─────────────────────────────────────────────────────────
         state.episodic_memory = EpisodicMemory()
         state.skill_memory = SkillMemory()
+        from memory.swarm_experience import SwarmExperienceMemory
+        state.swarm_experience_memory = SwarmExperienceMemory()
+        state.mission_progress.set_experience_memory(state.swarm_experience_memory)
+        state.push_log("success", "shared multi-UAV experience memory initialized")
 
         # ── 反思引擎 + 技能进化 ──────────────────────────────────────────────
         try:
@@ -743,6 +769,7 @@ def _do_init():
             state.skill_memory,
             reflection_engine=reflection_engine,
             skill_evolution=skill_evolution,
+            swarm_experience_memory=state.swarm_experience_memory,
         )
 
         # ── 经验向量存储 ──────────────────────────────────────────────────────
@@ -776,9 +803,10 @@ def _try_connect_adapter():
     """通过 adapter_manager 连接仿真环境，连上后启动遥测同步线程。"""
     def _connect():
         try:
-            from adapters.adapter_manager import init_adapter, get_adapter
+            from adapters.adapter_manager import init_startup_adapter as init_adapter, get_adapter
             import os
-            sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
+            sim_adapter = os.getenv("SIM_ADAPTER", "mock").strip().lower() or "mock"
+
 
             if sim_adapter == "airsim":
                 host = os.getenv("AIRSIM_HOST", "127.0.0.1")
@@ -810,6 +838,11 @@ def _try_connect_adapter():
                 ok = init_adapter("px4", connection_str=os.getenv("PX4_MAVSDK_URL", "udp://:14540"), timeout=int(os.getenv("PX4_CONNECT_TIMEOUT", "60")))
 
             adapter = get_adapter()
+            if ok and getattr(adapter, "name", "") == "mock":
+                if sim_adapter != "mock":
+                    state.push_log("warning", "AirSim unavailable; Mock/MPE control is active")
+                sim_adapter = "mock"
+                os.environ["SIM_ADAPTER"] = "mock"
             if adapter is not None:
                 _refresh_robot_skill_profiles(getattr(adapter, "name", sim_adapter))
             if ok:
@@ -835,6 +868,9 @@ def _try_connect_adapter():
             else:
                 state.push_log("warn", f"Adapter degraded to: {adapter.name}")
             _start_telemetry_sync()
+            socketio.emit("world_state", state.get_world_snapshot())
+            socketio.emit("skill_catalog", _get_skill_catalog())
+            socketio.emit("system_status", _get_system_status())
 
             # Start simulator-specific sensor streaming.
             # AirSim frames are read via RPC; PX4+Gazebo frames/LiDAR are read
@@ -850,7 +886,7 @@ def _try_connect_adapter():
                 _start_sensor_bridge()
 
         except Exception as e:
-            state.push_log("warn", f"Adapter unavailable: {e}, running in mock mode")
+            state.push_log("warn", f"Adapter initialization failed: {e}")
 
     t = threading.Thread(target=_connect, daemon=True)
     t.start()
@@ -1235,11 +1271,11 @@ def _synchronize_mock_fleet(count: int, positions=None) -> dict:
 
 def _start_telemetry_sync():
     """后台持续读取仿真遥测数据，同步到 WorldModel 并推送前端。"""
-    sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
-    default_position_hz = 10.0 if sim_adapter in ("airsim", "airsim_physics", "mock") else 2.0
+    initial_sim_adapter = os.getenv("SIM_ADAPTER", "mock").lower()
+    default_position_hz = 30.0 if initial_sim_adapter == "mock" else (10.0 if initial_sim_adapter in ("airsim", "airsim_physics") else 2.0)
     try:
         position_hz = float(
-            os.getenv("AIRSIM_TELEMETRY_HZ", str(default_position_hz))
+            os.getenv("AEROWEAVER_MOCK_TELEMETRY_HZ" if initial_sim_adapter == "mock" else "AIRSIM_TELEMETRY_HZ", str(default_position_hz))
         )
     except (TypeError, ValueError):
         position_hz = default_position_hz
@@ -1260,6 +1296,16 @@ def _start_telemetry_sync():
 
         while state.initialized:
             loop_started = time.monotonic()
+            # The UI can switch between mock and AirSim after startup.
+            sim_adapter = os.getenv("SIM_ADAPTER", "mock").lower()
+
+            # Adapter switches must not retain the previous backend's cadence.
+            try:
+                current_hz = float(os.getenv("AEROWEAVER_MOCK_TELEMETRY_HZ", "30")) if sim_adapter == "mock" else float(os.getenv("AIRSIM_TELEMETRY_HZ", "10"))
+            except ValueError:
+                current_hz = 30.0 if sim_adapter == "mock" else 10.0
+            position_interval = 1.0 / max(1.0, min(current_hz, 30.0))
+
             try:
                 adapter = get_adapter()
                 if adapter and not _adapter_connected(adapter):
@@ -1323,6 +1369,7 @@ def _start_telemetry_sync():
                                 "battery": round(max(0.0, min(100.0, battery)), 1),
                                 "position": [round(float(value), 2) for value in telemetry.get("position", [0, 0, 0])[:3]],
                                 "in_air": in_air,
+                                "velocity": list(telemetry.get("velocity", [0, 0, 0])),
                                 "status": "executing" if moving or state.is_robot_executing(robot_id) else ("airborne" if in_air else "idle"),
                             }
                         if update["robots"]:
@@ -1406,6 +1453,9 @@ def _start_passive_perception():
 
 def _start_airsim_camera_stream():
     """Push AirSim camera frames using the same WebSocket payload as Gazebo."""
+    global _AIRSIM_CAMERA_STREAM_STARTED
+    if _AIRSIM_CAMERA_STREAM_STARTED:
+        return
     if AIRSIM_CAMERA_RELAY_ENABLED:
         logger.info(
             "AirSim browser camera feed uses local relay at %s; "
@@ -1414,6 +1464,7 @@ def _start_airsim_camera_stream():
         )
         return
 
+    _AIRSIM_CAMERA_STREAM_STARTED = True
     stream_interval = max(0.05, float(os.getenv("AIRSIM_CAMERA_STREAM_INTERVAL", "0.25")))
     scene_interval = max(0.5, float(os.getenv("AIRSIM_SCENE_STREAM_INTERVAL", "3.0")))
     camera_quality = _clamped_int(os.getenv("AIRSIM_SOCKET_JPEG_QUALITY"), 75, 35, 95)
@@ -2210,7 +2261,7 @@ def _handle_fleet_request(
             "syncing": _fleet_sync_lock.locked(),
         })
 
-    sim_adapter = os.getenv("SIM_ADAPTER", "px4").lower()
+    sim_adapter = os.getenv("SIM_ADAPTER", "mock").lower()
     if sim_adapter not in ("airsim", "airsim_physics", "mock"):
         return jsonify({"ok": False, "error": "Fleet synchronization requires Mock or AirSim"}), 409
     if state.is_executing and not allow_during_ai:
@@ -2251,109 +2302,65 @@ def _handle_fleet_request(
             )
             return jsonify(result)
 
-        expected = [f"Drone_{index}" for index in range(1, _AIRSIM_POOL_SIZE + 1)]
-        actual = []
-        try:
-            from adapters.airsim_rpc import AirSimDirectClient
-            inventory_client = AirSimDirectClient(
-                os.getenv("AIRSIM_HOST", "127.0.0.1"),
-                int(os.getenv("AIRSIM_PORT", "41451")),
-                timeout=3,
-            )
-            if inventory_client.connect() and inventory_client.ping():
-                actual = sorted(
-                    [str(name) for name in inventory_client.list_vehicles() if str(name).strip()],
-                    key=_vehicle_sort_key,
-                )
-        except Exception:
-            actual = []
-        finally:
-            if "inventory_client" in locals():
-                inventory_client.close()
-
-        from airsim_fleet import FleetSyncError, synchronize_airsim_fleet
-        try:
-            result = synchronize_airsim_fleet(
-                count,
-                positions,
-                force_restart=bool(payload.get("force_restart")) or actual != expected,
-                pool_size=_AIRSIM_POOL_SIZE,
-            )
-        except FleetSyncError as exc:
-            logger.error("AirSim fleet synchronization failed: %s", exc)
-            return jsonify({"ok": False, "error": str(exc)}), 502
-
         from adapters.adapter_manager import get_adapter
         adapter = get_adapter()
-
-        if result.get("restarted"):
-            invalidate = getattr(adapter, "invalidate_connection", None) if adapter else None
-            if callable(invalidate):
-                invalidate()
-            actual = []
-            deadline = time.time() + 60
-            while time.time() < deadline:
-                client = None
-                try:
-                    from adapters.airsim_rpc import AirSimDirectClient
-                    client = AirSimDirectClient(
-                        os.getenv("AIRSIM_HOST", "127.0.0.1"),
-                        int(os.getenv("AIRSIM_PORT", "41451")),
-                        timeout=3,
-                    )
-                    if client.connect() and client.ping():
-                        actual = sorted(
-                            [str(name) for name in client.list_vehicles() if str(name).strip()],
-                            key=_vehicle_sort_key,
-                        )
-                        if actual == expected:
-                            break
-                except Exception:
-                    actual = []
-                finally:
-                    if client:
-                        client.close()
-                time.sleep(2)
-
-        if actual != expected:
+        if adapter is None or not _adapter_connected(adapter):
             return jsonify({
-                **result,
                 "ok": False,
-                "error": "AirSim vehicle pool did not become ready",
-                "expected_vehicles": expected,
-                "actual_vehicles": actual,
-            }), 504
+                "error": "AirSim adapter is not connected",
+            }), 503
 
-        if adapter:
-            connection = f"{os.getenv('AIRSIM_HOST', '127.0.0.1')}:{os.getenv('AIRSIM_PORT', '41451')}"
-            with _adapter_reconnect_lock:
-                connected = _adapter_connected(adapter) or adapter.connect(
-                    connection_str=connection,
-                    timeout=10,
-                )
-            if not connected:
-                return jsonify({
-                    **result,
-                    "ok": False,
-                    "error": "AirSim pool is ready but the backend adapter could not connect",
-                    "actual_vehicles": actual,
-                }), 502
+        vehicles = list(getattr(adapter, "_vehicle_names", []) or [])
+        if not vehicles:
+            client = getattr(adapter, "_client", None)
+            try:
+                vehicles = list(client.list_vehicles() or []) if client else []
+            except Exception:
+                vehicles = []
+        vehicles = sorted(
+            [str(name) for name in vehicles if str(name).strip()],
+            key=_vehicle_sort_key,
+        )
+        if not vehicles:
+            return jsonify({"ok": False, "error": "AirSim returned no vehicles"}), 502
+        if count > len(vehicles):
+            return jsonify({
+                "ok": False,
+                "error": f"Requested {count} UAVs but AirSim exposes only {len(vehicles)}",
+                "available_vehicles": vehicles,
+            }), 409
 
-            apply_layout = getattr(adapter, "apply_vehicle_pool_layout", None)
-            if not callable(apply_layout):
-                return jsonify({
-                    **result,
-                    "ok": False,
-                    "error": "The active AirSim adapter does not support pooled fleet layouts",
-                }), 501
-            layout_result = apply_layout(result.get("pool") or [])
-            if not layout_result.success:
-                return jsonify({
-                    **result,
-                    "ok": False,
-                    "error": f"AirSim pool positioning failed: {layout_result.message}",
-                }), 502
-            result["activation"] = layout_result.data
+        settle_fleet = getattr(adapter, "settle_active_fleet", None)
+        if not callable(settle_fleet):
+            return jsonify({
+                "ok": False,
+                "error": "The active AirSim adapter does not support standard fleet reset",
+            }), 501
+        settle_result = settle_fleet(count)
+        if not settle_result.success:
+            return jsonify({
+                "ok": False,
+                "error": f"AirSim fleet reset failed: {settle_result.message}",
+                "vehicles": vehicles[:count],
+            }), 502
+
+        result = {
+            "ok": True,
+            "adapter": getattr(adapter, "name", "airsim"),
+            "active_count": count,
+            "pool_size": len(vehicles),
+            "ready_pool_size": len(vehicles),
+            "fleet": [
+                {
+                    "robot_id": f"UAV_{index}",
+                    "vehicle": vehicle,
+                    "active": True,
+                }
+                for index, vehicle in enumerate(vehicles[:count], start=1)
+            ],
+            "activation": settle_result.data or {},
+            "restarted": False,
+        }
 
         state._desired_airsim_fleet_count = count
         try:
@@ -2363,8 +2370,7 @@ def _handle_fleet_request(
         if adapter:
             _sync_airsim_fleet_to_world(adapter)
 
-        result["actual_vehicles"] = actual
-        result["active_count"] = count
+        result["actual_vehicles"] = vehicles
         socketio.emit("world_state", state.get_world_snapshot())
         socketio.emit("skill_catalog", _get_skill_catalog())
         socketio.emit("system_status", _get_system_status())
@@ -2424,6 +2430,11 @@ def api_adapter_status():
             "description": getattr(adapter, "description", ""),
             "connected": _adapter_connected(adapter),
         }
+        if str(payload["adapter"]).lower() in {"airsim", "airsim_openfly", "airsim_physics"}:
+            payload["host"] = getattr(adapter, "_airsim_host", os.getenv("AIRSIM_HOST", "127.0.0.1"))
+            payload["port"] = int(getattr(adapter, "_airsim_port", os.getenv("AIRSIM_PORT", "41451")))
+            payload["connection"] = f"{payload['host']}:{payload['port']}"
+        payload["pixel_streaming"] = _pixel_streaming_config()
         try:
             st = adapter.get_state()
             if st is None:
@@ -2442,6 +2453,87 @@ def api_adapter_status():
     except Exception as e:
         return jsonify({"ok": False, "connected": False, "error": str(e)}), 500
 
+
+@app.route("/api/adapter/connect", methods=["POST"])
+def api_adapter_connect():
+    """Explicitly switch between the default mock runtime and a UE4 AirSim backend."""
+    if not state.initialized:
+        return jsonify({"ok": False, "error": "Initialize the system before selecting a simulator"}), 409
+    if state.is_executing or state.executing_robot_snapshot():
+        return jsonify({"ok": False, "error": "Stop the active mission before switching simulators"}), 409
+
+    payload = request.get_json(silent=True) or {}
+    requested = str(payload.get("adapter") or "airsim").strip().lower()
+    if requested not in {"mock", "airsim"}:
+        return jsonify({"ok": False, "error": "adapter must be mock or airsim"}), 400
+
+    from adapters.adapter_manager import get_primary_adapter, switch_adapter
+
+    if requested == "mock":
+        try:
+            ok = switch_adapter("mock", connection_str="mock://", timeout=5)
+        except Exception as exc:
+            ok = False
+            error = str(exc)
+        if not ok:
+            return jsonify({"ok": False, "error": locals().get("error", "Mock adapter connection failed")}), 502
+        os.environ["SIM_ADAPTER"] = "mock"
+        _refresh_robot_skill_profiles("mock")
+        socketio.emit("world_state", state.get_world_snapshot())
+        socketio.emit("skill_catalog", _get_skill_catalog())
+        socketio.emit("system_status", _get_system_status())
+        state.push_log("success", "Switched to MPE-style mock runtime")
+        return jsonify({"ok": True, "adapter": "mock", "connected": True})
+
+    host = str(payload.get("host") or "").strip()
+    if not host or len(host) > 253:
+        return jsonify({"ok": False, "error": "Enter a valid UE4/AirSim host or IP address"}), 400
+    if any(ord(char) < 33 for char in host) or any(char in host for char in ("/", "?", "#", ":")) or "\\" in host:
+        return jsonify({"ok": False, "error": "Host must be an IP address or hostname without a URL path"}), 400
+    try:
+        port = int(payload.get("port", os.getenv("AIRSIM_PORT", "41451")))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "AirSim port must be an integer"}), 400
+    if not 1 <= port <= 65535:
+        return jsonify({"ok": False, "error": "AirSim port must be between 1 and 65535"}), 400
+
+    connection = f"{host}:{port}"
+    try:
+        ok = switch_adapter("airsim", connection_str=connection, timeout=15)
+        error = "" if ok else "AirSim did not accept the RPC connection"
+    except Exception as exc:
+        ok = False
+        error = str(exc)
+
+    if not ok:
+        try:
+            switch_adapter("mock", connection_str="mock://", timeout=5)
+            os.environ["SIM_ADAPTER"] = "mock"
+            _refresh_robot_skill_profiles("mock")
+            socketio.emit("world_state", state.get_world_snapshot())
+            socketio.emit("skill_catalog", _get_skill_catalog())
+        except Exception:
+            logger.exception("Failed to restore mock adapter after AirSim connection failure")
+        state.push_log("warning", f"AirSim connection failed for {host}:{port}; mock runtime retained")
+        return jsonify({"ok": False, "adapter": "mock", "connected": True, "error": error}), 502
+
+    os.environ["SIM_ADAPTER"] = "airsim"
+    os.environ["AIRSIM_HOST"] = host
+    os.environ["AIRSIM_PORT"] = str(port)
+    adapter = get_primary_adapter()
+    _refresh_robot_skill_profiles(getattr(adapter, "name", "airsim"))
+    _start_airsim_camera_stream()
+    socketio.emit("world_state", state.get_world_snapshot())
+    socketio.emit("skill_catalog", _get_skill_catalog())
+    socketio.emit("system_status", _get_system_status())
+    state.push_log("success", f"AirSim connected at {host}:{port}; UE4 backend is active")
+    return jsonify({
+        "ok": True,
+        "adapter": getattr(adapter, "name", "airsim"),
+        "connected": _adapter_connected(adapter),
+        "host": host,
+        "port": port,
+    })
 
 @app.route("/api/world", methods=["GET"])
 def api_world():
@@ -2947,6 +3039,20 @@ def api_sensor_camera():
 
     client = getattr(adapter, "_client", None) if adapter else None
     if client:
+        if view == "scene":
+            try:
+                payload = _fetch_airsim_scene_camera(
+                    client,
+                    jpeg_quality=92,
+                    max_width=1920,
+                    max_height=1080,
+                )
+            except Exception as exc:
+                logger.debug("scene camera snapshot failed: %s", exc)
+                payload = None
+            frame = _jpeg_bytes_from_payload(payload)
+            if frame:
+                return Response(frame, mimetype="image/jpeg")
         candidates = [explicit_camera] if explicit_camera else _camera_candidates(view)
         for camera_name in candidates:
             if not camera_name:
@@ -3052,6 +3158,20 @@ def api_sensor_camera_stream():
         client = _get_rpc_client()
         if not client:
             return None
+        if view == "scene":
+            try:
+                payload = _fetch_airsim_scene_camera(
+                    client,
+                    jpeg_quality=quality,
+                    max_width=max_width,
+                    max_height=max_height,
+                )
+            except Exception as exc:
+                logger.debug("scene camera MJPEG failed: %s", exc)
+                payload = None
+            frame = _jpeg_bytes_from_payload(payload)
+            if frame:
+                return frame
         candidates = [explicit_camera] if explicit_camera else _camera_candidates(view)
         for camera_name in candidates:
             if not camera_name:
@@ -3502,6 +3622,63 @@ def _execution_robot_ids(robot_id: str, skill_name: str, parameters: dict) -> li
         normalized.insert(0, robot_id)
     return sorted(normalized, key=_vehicle_sort_key)
 
+def _record_manual_skill_experience(
+    *,
+    skill_name: str,
+    robot_ids: list[str],
+    parameters: dict,
+    result,
+) -> None:
+    """Persist a manual UI skill execution in the shared swarm memory."""
+    memory = getattr(state, "swarm_experience_memory", None)
+    if memory is None:
+        return
+
+    mission_id = f"manual-{int(time.time() * 1000)}-{skill_name}"
+    task = f"manual skill execution: {skill_name}"
+    from memory.roles import infer_role
+    success = bool(getattr(result, "success", False))
+    try:
+        reward = float(getattr(result, "reward", 0.0) or (1.0 if success else -1.0))
+    except (TypeError, ValueError):
+        reward = 1.0 if success else -1.0
+    trace = {
+        "quality": 1.0 if success else -0.5,
+        "progress": 1.0 if success else 0.0,
+        "cost_time": float(getattr(result, "cost_time", 0.0) or 0.0),
+        "output": str(getattr(result, "output", "") or "")[:240],
+        "error": str(getattr(result, "error_msg", "") or "")[:240],
+    }
+    try:
+        memory.begin_mission(mission_id, task, robot_ids)
+        world_state = state.world_model.get_world_state() if state.world_model else {}
+        robots = world_state.get("robots", {}) if isinstance(world_state, dict) else {}
+        for agent_id in robot_ids:
+            agent_state = robots.get(agent_id, {}) if isinstance(robots, dict) else {}
+            memory.record_step(
+                mission_id=mission_id,
+                task=task,
+                state=json.dumps(agent_state, ensure_ascii=False, default=str),
+                action_id=f"manual:{skill_name}",
+                skill=skill_name,
+                agent_id=agent_id,
+                role=infer_role(skill=skill_name, task=task, metadata=parameters),
+                success=success,
+                reward=reward,
+                trace=trace,
+                metadata={"source": "manual_ui", "parameters": parameters},
+            )
+        memory.finalize_mission(
+            mission_id=mission_id,
+            success=success,
+            votes={agent_id: success for agent_id in robot_ids},
+            trace_summary={"progress": 1.0 if success else 0.0},
+            overall_reward=reward,
+        )
+    except Exception as exc:
+        logger.warning("manual skill experience write failed: %s", exc)
+
+
 
 @socketio.on("execute_skill")
 def on_execute_skill(data):
@@ -3532,6 +3709,7 @@ def on_execute_skill(data):
 
     if not skill_name:
         emit("skill_result", {"ok": False, "error": "skill_name 不能为空"})
+
         return
 
     execution_robot_ids = _execution_robot_ids(robot_id, skill_name, parameters)
@@ -3593,6 +3771,13 @@ def on_execute_skill(data):
             state.push_log(level, f"{'✅' if ok else '❌'} {skill_name} → {'成功' if ok else '失败: ' + result.error_msg}",
                            {"skill": skill_name, "robot": robot_id, "output": result.output})
 
+
+            _record_manual_skill_experience(
+                skill_name=skill_name,
+                robot_ids=execution_robot_ids,
+                parameters=parameters,
+                result=result,
+            )
             # 回写该机器人的技能执行状态（per-robot 隔离）
             robot_reg = state.robot_registries.get(robot_id)
             if robot_reg:
@@ -3796,6 +3981,10 @@ def on_ai_task(data):
                 on_stream=_on_stream,
                 stop_event=state._ai_stop_event,
                 experience_store=getattr(state, "experience_store", None),
+                experience_memory=getattr(state, "swarm_experience_memory", None),
+                agent_id=state.current_robot,
+                agent_role=infer_role(task=task),
+                mission_id=state.mission_progress.mission_id() or None,
             )
             # 注入被动感知引擎引用
             try:
@@ -3921,6 +4110,14 @@ def _send_agent_network_message(source, target, content, sid, *, mission_id="", 
     if source.startswith("UAV_") and target.startswith("UAV_"):
         state.agent_contexts.touch_link(source, target, mission_id)
         _emit_comm_links(sid, mission_id)
+        state.push_log(
+            "info",
+            f"Peer message {source} -> {target}: {content}",
+            {"intent": "peer_message", "mission_id": mission_id, "source": source, "target": target, "kind": kind},
+        )
+    # Autonomous task traffic is part of the shared operational trace, so every
+    # open console can observe result and peer messages in real time.
+    event_sid = sid if kind not in {"peer", "result"} else None
     event = _emit_uav_agent_message(
         target,
         source,
@@ -3928,8 +4125,13 @@ def _send_agent_network_message(source, target, content, sid, *, mission_id="", 
         content,
         kind=kind,
         intent="COMM",
-        sid=sid,
+        sid=event_sid,
     )
+    if kind in {"peer", "result"}:
+        socketio.emit("uav_agent_message", event)
+        # Keep the visible trace recoverable for clients that connect during a
+        # fast Mock episode or miss one polling packet.
+        socketio.emit("uav_agent_snapshot", state.agent_contexts.snapshot())
     if inject:
         state.agent_contexts.append_history(
             target,
@@ -4275,6 +4477,7 @@ def _run_pursuit_mission(assignments, scenario, sid, mission_id):
     from adapters.adapter_manager import get_adapter
     from brain.pursuit_mission import (
         build_local_observation,
+        constrain_direction_to_area,
         direction_changed,
         evaluate_pursuit,
         parse_motion_decision,
@@ -4401,7 +4604,31 @@ def _run_pursuit_mission(assignments, scenario, sid, mission_id):
             round_success = {}
             for robot_id in participants:
                 decision = decisions[robot_id]
-                direction = decision["direction"]
+                direction = list(decision["direction"])
+                previous = previous_directions.get(robot_id)
+                if previous:
+                    # Keep the persistent velocity model from reacting to a
+                    # small target/observation change with an instant turn.
+                    # A stronger attenuation is used for a true reversal.
+                    previous_xy = [float(previous[0]), float(previous[1])]
+                    current_xy = [float(direction[0]), float(direction[1])]
+                    dot = previous_xy[0] * current_xy[0] + previous_xy[1] * current_xy[1]
+                    alpha = 0.10 if dot < 0.0 else 0.24
+                    blended = [
+                        previous_xy[axis] * (1.0 - alpha) + current_xy[axis] * alpha
+                        for axis in range(2)
+                    ]
+                    magnitude = math.hypot(*blended)
+                    if magnitude > 1e-9:
+                        direction = [blended[0] / magnitude, blended[1] / magnitude, 0.0]
+                        direction = constrain_direction_to_area(
+                            observations[robot_id].get("position"),
+                            direction,
+                            decision["speed_mps"],
+                            decision_interval,
+                            scenario.get("area_bounds"),
+                        )
+                decision = {**decision, "direction": direction}
                 result = None
                 changed = direction_changed(previous_directions.get(robot_id), direction)
                 if changed:
@@ -4807,6 +5034,74 @@ def _run_uav_agent_assignment(assignment, sid, mission_id):
 
 
 def _run_commander_input(message, display_message, interaction_mode, sid, task_area=None):
+    # Recognize paper-aligned Mock task forms from the operator's natural language.
+    if interaction_mode != "chat":
+        try:
+            from adapters.adapter_manager import get_adapter
+            from sim.mock_task_api import (
+                infer_task_id,
+                infer_task_layout,
+                infer_task_seed,
+                llm_infer_task_layout,
+            )
+            adapter = get_adapter()
+            parser_source = "llm"
+            try:
+                task_layout = (
+                    llm_infer_task_layout(message, sorted(_active_uav_states()))
+                    if getattr(adapter, "name", "") == "mock" else None
+                ) or {}
+                task_id = task_layout.get("scenario_id")
+            except Exception as exc:
+                parser_source = "rule_fallback"
+                logger.warning("LLM task parser unavailable; using deterministic fallback: %s", exc)
+                task_id = infer_task_id(message)
+                task_layout = infer_task_layout(message, task_id)
+            role_assignments = task_layout.get("role_assignments")
+            role_counts = task_layout.get("role_counts", {})
+            requested_fleet_size = task_layout.get("fleet_size")
+            if role_assignments:
+                requested_fleet_size = len(role_assignments)
+            elif role_counts:
+                # Preserve an explicit role-range request as a total fleet
+                # request as well, so a later fleet sync cannot fall back to
+                # the previous two/four-UAV roster.
+                requested_fleet_size = max(
+                    int(requested_fleet_size or 0),
+                    sum(int(count) for count in role_counts.values()),
+                )
+            starter = getattr(state, "mock_task_start", None)
+            if getattr(adapter, "name", "") == "mock" and callable(starter) and task_id:
+                payload, status = starter({
+                    "scenario_id": task_id,
+                    "parser_source": parser_source,
+                    "policy": "llm",
+                    "seed": infer_task_seed(message),
+                    "max_rounds": 120,
+                    "task_area": task_area,
+                    "role_counts": role_counts,
+                    "role_assignments": role_assignments,
+                    "fleet_size": requested_fleet_size,
+                }, sid=sid)
+                if status != 200:
+                    _emit_uav_agent_reply("COMMANDER", sid, payload.get("error", "Mock task could not be started."), intent="ERROR", message=display_message, ok=False)
+                    return
+                task = payload["task"]
+                role_summary = ", ".join(f"{count} {role}" for role, count in sorted(task.get("role_counts", {}).items()))
+                reply = (
+                    f"Initialized {task['title']} in the existing Mock runtime. "
+                    f"Commander assigned {len(task['roles'])} body-bound local agents ({role_summary}); "
+                    f"layout seed {task['seed']}; they will select skills from local observations "
+                    f"and exchange directed peer messages. Task parser: {parser_source}."
+                )
+                state.agent_contexts.append_history("COMMANDER", "user", message)
+                state.agent_contexts.append_history("COMMANDER", "assistant", reply)
+                _emit_uav_agent_reply("COMMANDER", sid, reply, intent="COMMAND", message=display_message, mission_id=task.get("mission_id", ""))
+                state.push_log("info", reply, {"intent": "mock_task_start", "task_id": task_id})
+                return
+        except Exception:
+            logger.exception("Natural-language Mock task dispatch failed")
+
     from brain.commander import handle_global_input
     from llm_client import get_client
 
@@ -5329,6 +5624,10 @@ def _run_agent_loop(goal, sid):
             on_stream=lambda token: socketio.emit("ai_stream", {"token": token, "done": False}),
             stop_event=state._ai_stop_event,
             experience_store=getattr(state, "experience_store", None),
+            experience_memory=getattr(state, "swarm_experience_memory", None),
+            agent_id=robot_id,
+            agent_role=infer_role(task=goal),
+            mission_id=state.mission_progress.mission_id() or None,
         )
         # 注入被动感知引擎引用
         try:
@@ -5373,8 +5672,11 @@ def _execute_plan_from_chat(task, steps, sid, robot_id=None, reply_to="Operator"
         reply = "COMMANDER has no physical control authority; assign the task to a UAV agent."
         _emit_execution_reply(robot_id, sid, reply, "DENIED", task, reply_to)
         return {"success": False, "moved_distance_m": 0.0, "summary": reply}
+    mission_snapshot = state.mission_progress.snapshot()
+    mission_agent = (mission_snapshot.get("agents") or {}).get(robot_id, {})
+    agent_role = str(mission_agent.get("role") or "agent")
     steps = [
-        {**step, "robot": robot_id}
+        {**step, "robot": robot_id, "role": agent_role}
         for step in (steps or [])
         if isinstance(step, dict)
     ]
@@ -5384,7 +5686,7 @@ def _execute_plan_from_chat(task, steps, sid, robot_id=None, reply_to="Operator"
         _emit_execution_reply(robot_id, sid, reply, "BUSY", task, reply_to)
         return {"success": False, "moved_distance_m": 0.0, "summary": reply}
 
-    agent_runtime = UAVAgentRuntime(state.runtime, robot_id)
+    agent_runtime = UAVAgentRuntime(state.runtime, robot_id, role=agent_role)
     socketio.emit("system_status", _get_system_status())
 
     try:
@@ -5857,7 +6159,7 @@ def on_register_robot(data):
         emit("register_robot_result", {"ok": False, "error": "robot_id 不能为空"})
         return
 
-    if os.getenv("SIM_ADAPTER", "px4").lower() in ("airsim", "airsim_physics") and robot_type == "UAV":
+    if os.getenv("SIM_ADAPTER", "mock").lower() in ("airsim", "airsim_physics") and robot_type == "UAV":
         try:
             from adapters.adapter_manager import get_adapter
             adapter = get_adapter()
@@ -5927,7 +6229,7 @@ def on_register_robot(data):
 def _world_state_broadcaster():
     while True:
         time.sleep(2)
-        if state.initialized:
+        if state.initialized and os.getenv("SIM_ADAPTER", "mock").lower() not in {"mock", "airsim", "airsim_physics"}:
             socketio.emit("world_state", state.get_world_snapshot())
 
 
@@ -5945,11 +6247,38 @@ def _get_memory_manager():
     return _memory_manager_singleton
 
 
+def _get_swarm_experience_memory():
+    """Return the persistent shared experience store used by AgentLoop."""
+    return getattr(state, "swarm_experience_memory", None)
+
+
+def _swarm_record_item(record, *, score: float = 0.0) -> dict:
+    outcome = "success" if record.success else "failure"
+    observed_return = f"{record.return_value:.2f}" if record.return_value is not None else "unavailable"
+    return {
+        "text": (
+            f"{record.role} (instance={record.agent_id}) / {record.skill}: {outcome} | "
+            f"return={observed_return} | "
+            f"mission={record.mission_id}"
+        ),
+        "score": round(float(score), 6),
+        "layer": "swarm_experience",
+        "metadata": asdict(record),
+    }
+
+
 @app.route("/api/memory/stats", methods=["GET"])
 def api_memory_stats():
     """记忆系统统计"""
     try:
         mm = _get_memory_manager()
+        swarm = _get_swarm_experience_memory()
+        swarm_stats = swarm.stats() if swarm else {
+            "records": 0,
+            "events": 0,
+            "missions": 0,
+            "success_rate": 0.0,
+        }
         return jsonify({
             "ok": True,
             "layers": {
@@ -5957,14 +6286,23 @@ def api_memory_stats():
                 "episodic": {"count": mm.episodic.count(), "label": "Episodic"},
                 "skill": {"count": mm.skill.count(), "label": "Skill"},
                 "world": {"count": mm.world.count(), "label": "World"},
+                "swarm_experience": {
+                    "count": swarm_stats["records"],
+                    "label": "Shared Swarm Experience",
+                    "events": swarm_stats["events"],
+                    "missions": swarm_stats["missions"],
+                    "success_rate": swarm_stats["success_rate"],
+                },
             },
+            "swarm_experience": swarm_stats,
         })
-    except Exception as e:
+    except Exception:
         return jsonify({"ok": True, "layers": {
             "working": {"count": 0, "label": "Working"},
             "episodic": {"count": 0, "label": "Episodic"},
             "skill": {"count": 0, "label": "Skill"},
             "world": {"count": 0, "label": "World"},
+            "swarm_experience": {"count": 0, "label": "Shared Swarm Experience"},
         }})
 
 
@@ -5973,12 +6311,18 @@ def api_memory_recent():
     """最近记忆"""
     try:
         mm = _get_memory_manager()
-        items = mm.working.get_recent(20)
-        return jsonify({"ok": True, "items": [
+        items = [
             {"text": str(item), "score": 0, "layer": "working", "metadata": {}}
-            for item in items
-        ]})
-    except Exception as e:
+            for item in mm.working.get_recent(20)
+        ]
+        swarm = _get_swarm_experience_memory()
+        if swarm:
+            items.extend(
+                _swarm_record_item(record)
+                for record in reversed(swarm.records()[-20:])
+            )
+        return jsonify({"ok": True, "items": items[:40]})
+    except Exception:
         return jsonify({"ok": True, "items": []})
 
 
@@ -5993,19 +6337,71 @@ def api_memory_search():
     try:
         mm = _get_memory_manager()
         items = mm.recall(query, top_k=top_k)
-        return jsonify({"ok": True, "query": query, "items": [
+        results = [
             {"text": i.text, "score": i.score, "layer": i.metadata.get("layer", "unknown"),
              "metadata": i.metadata} for i in items
-        ]})
+        ]
+        swarm = _get_swarm_experience_memory()
+        if swarm:
+            results.extend(
+                _swarm_record_item(record, score=score)
+                for score, record in swarm.retrieve(task=query, state=query, top_k=top_k)
+            )
+        results.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        return jsonify({"ok": True, "query": query, "items": results[:max(1, int(top_k) * 2)]})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/memory/swarm-experience", methods=["GET"])
+def api_swarm_experience():
+    """Inspect shared swarm experience without exposing model configuration."""
+    memory = _get_swarm_experience_memory()
+    if memory is None:
+        return jsonify({"ok": True, "stats": {"records": 0, "events": 0, "missions": 0}, "records": []})
+    try:
+        raw_limit = request.args.get("limit", "40")
+        limit = max(1, min(int(raw_limit), 200))
+    except (TypeError, ValueError):
+        limit = 40
+    records = [asdict(record) for record in memory.records()[-limit:]]
+    return jsonify({"ok": True, "stats": memory.stats(), "records": records})
+
+from memory.trajectory_api import register_trajectory_api
+register_trajectory_api(app, _get_swarm_experience_memory)
+
+
+@app.route("/api/environments/mpe", methods=["GET"])
+def api_mpe_environments():
+    """List the official MPE2 catalog and semantic role templates."""
+    from memory.roles import role_catalog
+    from sim.mpe_catalog import list_mpe2_environments
+    return jsonify({
+        "ok": True,
+        "source": "Farama MPE2",
+        "environments": list_mpe2_environments(),
+        "roles": role_catalog(),
+    })
+
+
+@app.route("/api/environments/mpe/<scenario_id>/probe", methods=["POST"])
+def api_mpe_probe(scenario_id):
+    """Reset and close one MPE2 environment to verify local availability."""
+    from sim.mpe_catalog import probe_mpe2_environment
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = probe_mpe2_environment(scenario_id, seed=int(payload.get("seed", 0)))
+    except Exception as exc:
+        return jsonify({"ok": False, "scenario_id": scenario_id, "error": str(exc)}), 503
+    return jsonify({"ok": True, **result})
+
 
 
 @app.route("/api/map/landmarks")
 def api_map_landmarks():
     """返回 WORLD_MAP.md 中的地标列表 (NED 坐标)"""
     import re as _re
-    map_path = os.path.join(_BASE_DIR, "robot_profile", "WORLD_MAP.md")
+    map_path = os.path.join(_BACKEND_DIR, "robot_profile", "WORLD_MAP.md")
     landmarks = []
     if os.path.exists(map_path):
         text = open(map_path, "r", encoding="utf-8").read()
@@ -6022,6 +6418,14 @@ def api_map_landmarks():
             })
     return jsonify({"landmarks": landmarks})
 
+
+from sim.mock_task_api import register_mock_tasks
+register_mock_tasks(
+    app, state, socketio, resize_fleet=_synchronize_mock_fleet,
+    set_mode=_set_operation_mode, emit_progress=_emit_commander_progress,
+    send_message=_send_agent_network_message, system_status=_get_system_status,
+    skill_catalog=_get_skill_catalog,
+)
 
 # ── 启动 ──────────────────────────────────────────────────────────────────────
 

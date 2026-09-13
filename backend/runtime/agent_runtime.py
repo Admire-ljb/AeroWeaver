@@ -17,6 +17,7 @@ Functions:
     monitor_execution()         - 获取当前执行状态报告
 """
 
+import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -68,6 +69,7 @@ class AgentRuntime:
         skill_memory=None,
         reflection_engine=None,
         skill_evolution=None,
+        swarm_experience_memory=None,
     ):
         """
         Args:
@@ -85,6 +87,7 @@ class AgentRuntime:
         self._skill_memory = skill_memory
         self._reflection_engine = reflection_engine
         self._skill_evolution = skill_evolution
+        self._swarm_experience_memory = swarm_experience_memory
 
         # 当前执行状态
         self._current_task_id: str | None = None
@@ -145,6 +148,7 @@ class AgentRuntime:
 
             result = self.dispatch_skill(step_data)
             report.step_results.append(result)
+            self._record_swarm_step(task_id, task, step_data, result)
             total_reward += result.reward
 
             # 更新技能记忆 + 回写 last_execution_status 到该机器人的 SkillRegistry
@@ -288,8 +292,48 @@ class AgentRuntime:
 
     # ── 内部辅助：写入 Memory ────────────────────────────────────────────────
 
+    def _record_swarm_step(self, task_id: str, task: str, step: dict, result: ExecutionResult) -> None:
+        if not self._swarm_experience_memory:
+            return
+        try:
+            state = self._world_model.get_robot_state(result.robot) or {}
+            trace = {
+                "quality": 1.0 if result.success else -0.5,
+                "progress": 1.0 if result.success else 0.0,
+                "cost_time": result.cost_time,
+                "output": str(result.output or "")[:240],
+                "logs": [str(item) for item in (result.logs or [])[-4:]],
+            }
+            self._swarm_experience_memory.record_step(
+                mission_id=task_id,
+                task=task,
+                state=json.dumps(state, ensure_ascii=False, default=str),
+                action_id=str(step.get("action_id") or step.get("skill") or "unknown"),
+                skill=str(step.get("skill") or result.skill),
+                agent_id=str(step.get("robot") or result.robot),
+                role=str(step.get("role") or step.get("agent_role") or ""),
+                success=bool(result.success),
+                reward=result.reward,
+                base_logprob=step.get("base_logprob", step.get("logprob", 0.0)),
+                trace=trace,
+                metadata={"step": step.get("step")},
+            )
+        except Exception as exc:
+            print(f"[Runtime] swarm experience step failed: {exc}")
+
     def _record_episode(self, report: PlanExecutionReport) -> None:
         """将任务执行结果写入 EpisodicMemory。"""
+        if self._swarm_experience_memory:
+            try:
+                progress = report.completed_steps / report.total_steps if report.total_steps else 0.0
+                self._swarm_experience_memory.finalize_mission(
+                    mission_id=report.task_id,
+                    success=bool(report.success),
+                    trace_summary={"progress": progress},
+                    overall_reward=report.overall_reward,
+                )
+            except Exception as exc:
+                print(f"[Runtime] swarm experience finalization failed: {exc}")
         if self._episodic_memory is None:
             return
 

@@ -108,6 +108,26 @@ class AirSimAdapter(SimAdapter):
         return (int(match.group(1)) if match else 10**9, str(name or ""))
 
     @staticmethod
+    def _is_reserve_spawn(position) -> bool:
+        """Recognize the off-site, below-terrain parking area used by the UAV pool."""
+        try:
+            north, east, down = (float(value) for value in position[:3])
+        except (TypeError, ValueError, IndexError):
+            return False
+        return north >= 450.0 and east >= 450.0 and down >= 40.0
+
+    @staticmethod
+    def _activation_spawn(index: int):
+        """Return a separated high-altitude spawn for a newly activated reserve UAV."""
+        index = max(1, int(index))
+        group = (index - 1) // 2
+        side = (index - 1) % 2
+        north = 10.0 + group * 30.0 + side * 10.0
+        east = -10.0 + side * 20.0
+        mission_down = -10.0 - (index - 1) * 2.0
+        return north, east, mission_down - _ACTIVATION_DROP_HEIGHT_M
+
+    @staticmethod
     def _position_from_pose(pose: dict):
         position = (pose or {}).get("position", {})
         return (
@@ -499,7 +519,7 @@ class AirSimAdapter(SimAdapter):
         )
 
     def settle_active_fleet(self, count: int) -> ActionResult:
-        """Settle the first N vehicles after an independent AirSim restart."""
+        """Reset the first N vehicles to their scene spawns and settle them."""
         active_items = []
         for index, vehicle in enumerate(self._vehicle_names[:max(0, int(count))], start=1):
             active_items.append({
@@ -507,6 +527,31 @@ class AirSimAdapter(SimAdapter):
                 "vehicle": vehicle,
                 "active": True,
             })
+        self._stop_hold()
+        try:
+            with self._manual_lock:
+                self._manual_states.clear()
+                for item in active_items:
+                    spawn = self._vehicle_spawn_poses.get(item["vehicle"])
+                    if spawn is None:
+                        return ActionResult(
+                            success=False,
+                            message=f"{item['vehicle']} has no known AirSim scene spawn",
+                        )
+                    if self._is_reserve_spawn(spawn):
+                        spawn = self._activation_spawn(
+                            int(str(item["robot_id"]).rsplit("_", 1)[-1])
+                        )
+                        logger.info(
+                            "Activating %s/%s from reserve parking at %s -> %s",
+                            item["robot_id"],
+                            item["vehicle"],
+                            self._vehicle_spawn_poses[item["vehicle"]],
+                            spawn,
+                        )
+                    self._set_vehicle_global_pose(item["vehicle"], *spawn)
+        except Exception as exc:
+            return ActionResult(success=False, message=f"AirSim scene reset failed: {exc}")
         result = self._descend_to_hover_clearance(active_items)
         if result.success:
             self._pool_active_robots = {

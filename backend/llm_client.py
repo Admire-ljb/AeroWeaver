@@ -25,6 +25,7 @@ llm_client.py  —— 统一 LLM 调用层
 from __future__ import annotations
 
 import json
+import math
 import logging
 import re
 import time
@@ -45,6 +46,14 @@ def _strip_thinking(text: str) -> str:
     # 去掉 <think>...</think> 块（包括跨行）
     text = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
     return text.strip()
+
+def _safe_logprob(value: Any) -> float:
+    """Return a finite log-probability without exposing provider payloads."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return -20.0
+    return parsed if math.isfinite(parsed) else -20.0
 
 import sys
 from pathlib import Path
@@ -118,7 +127,10 @@ class LLMClient:
         if (
             self._thinking is None
             and self._base_url.startswith("https://api.deepseek.com")
-            and self._model.startswith("deepseek-v4-")
+            and (
+                self._model.startswith("deepseek-v4-")
+                or self._model == "deepseek-flash"
+            )
         ):
             self._thinking = {"type": "disabled"}
         try:
@@ -177,6 +189,102 @@ class LLMClient:
             return self._chat_openai_compat(messages, temperature, max_tokens, on_chunk=on_chunk, **kwargs)
         else:
             raise NotImplementedError(f"api_type '{self._api_type}' 暂不支持")
+
+    def rank_candidates(
+        self,
+        messages: list[dict[str, str]],
+        candidate_ids: list[str],
+        temperature: float = 0.0,
+        max_tokens: int = 4,
+    ) -> dict[str, Any]:
+        """Rank safe candidate IDs and return provider log-probabilities.
+
+        This is separate from chat because the normal agent loop streams text.
+        It never returns executable code.
+        """
+        ids = [str(item).strip() for item in candidate_ids if str(item).strip()]
+        if not ids:
+            return {"selected_id": None, "logprobs": {}, "source": "empty"}
+        if self._api_type != "openai_compat":
+            raise NotImplementedError(f"api_type '{self._api_type}' 暂不支持 candidate ranking")
+        return self._rank_candidates_openai_compat(
+            messages, ids, temperature=temperature, max_tokens=max_tokens
+        )
+
+    def _rank_candidates_openai_compat(
+        self,
+        messages: list[dict[str, str]],
+        candidate_ids: list[str],
+        *,
+        temperature: float,
+        max_tokens: int,
+    ) -> dict[str, Any]:
+        instruction = (
+            "Select exactly one candidate ID from this allow-list and output only that ID. "
+            f"Allow-list: {', '.join(candidate_ids)}"
+        )
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [*messages, {"role": "user", "content": instruction}],
+            "stream": False,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "logprobs": True,
+            "top_logprobs": min(20, len(candidate_ids)),
+        }
+        if self._thinking is not None:
+            payload["thinking"] = self._thinking
+        request = urllib.request.Request(
+            f"{self._base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                body = response.read().decode("utf-8")
+            parsed = json.loads(body)
+            choice = parsed["choices"][0]
+            content = str((choice.get("message") or {}).get("content") or "").strip()
+            selected = next(
+                (item for item in candidate_ids if re.search(
+                    rf"(?<![A-Za-z0-9_]){re.escape(item)}(?![A-Za-z0-9_])",
+                    content,
+                    flags=re.IGNORECASE,
+                )),
+                candidate_ids[0],
+            )
+            values: dict[str, float] = {}
+            token_rows = ((choice.get("logprobs") or {}).get("content") or [])
+            for row in token_rows:
+                candidates = list(row.get("top_logprobs") or [])
+                candidates.append(row)
+                for token_row in candidates:
+                    token = str(token_row.get("token") or "").strip()
+                    if token in candidate_ids and token not in values:
+                        values[token] = _safe_logprob(token_row.get("logprob"))
+            uniform = -math.log(max(len(candidate_ids), 1))
+            values = {item: values.get(item, uniform) for item in candidate_ids}
+            return {
+                "selected_id": selected,
+                "logprobs": values,
+                "content": content,
+                "source": "provider_logprobs",
+            }
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise LLMUserError(
+                _friendly_http_error(exc.code, body, self._model),
+                detail=f"candidate ranking HTTP {exc.code}: {body[:300]}",
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, KeyError, IndexError) as exc:
+            raise LLMUserError(
+                "模型候选排序暂不可用：将回退到经验先验。",
+                detail=f"candidate ranking failed: {exc}",
+            ) from exc
 
     # ── 内部实现 ──────────────────────────────────────────────────────────────
 

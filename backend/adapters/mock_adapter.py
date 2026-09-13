@@ -7,6 +7,7 @@ import math
 import os
 import threading
 import time
+from contextlib import contextmanager
 
 from adapters.mock_dynamics import PointMassDynamics
 from adapters.sim_adapter import ActionResult, GPSPosition, Position, SimAdapter, VehicleState
@@ -38,6 +39,7 @@ class MockAdapter(SimAdapter):
 
     def __init__(self, *, realtime_factor=None, dynamics=None):
         self._state_lock = threading.RLock()
+        self._robot_context = threading.local()
         self._physics_condition = threading.Condition(self._state_lock)
         self._physics_stop = threading.Event()
         self._physics_thread = None
@@ -181,13 +183,19 @@ class MockAdapter(SimAdapter):
 
     def _physics_loop(self):
         wall_interval = self._dynamics.dt / self._realtime_factor
+        deadline = time.monotonic()
         while not self._physics_stop.is_set():
-            started = time.monotonic()
+            # Fixed simulation steps with bounded catch-up after scheduler delays.
+            now = time.monotonic()
+            steps = min(8, max(1, int((now - deadline) / wall_interval) + 1))
             with self._physics_condition:
-                self._step_world_locked()
+                for _ in range(steps):
+                    self._step_world_locked()
                 self._physics_condition.notify_all()
-            elapsed = time.monotonic() - started
-            self._physics_stop.wait(max(0.001, wall_interval - elapsed))
+            deadline += steps * wall_interval
+            if deadline < now - wall_interval:
+                deadline = now + wall_interval
+            self._physics_stop.wait(max(0.001, deadline - time.monotonic()))
 
     def _step_world_locked(self):
         for robot_id, state in self._robot_states.items():
@@ -354,6 +362,11 @@ class MockAdapter(SimAdapter):
                 self._physics_condition.wait(timeout=min(0.25, remaining))
 
     def set_active_robot(self, robot_id: str):
+        owner = getattr(self._robot_context, "robot_id", None)
+        if owner is not None:
+            if owner != str(robot_id):
+                raise ValueError("Cannot switch bodies inside a bound mock execution")
+            return
         with self._state_lock:
             self._active_robot = str(robot_id or "UAV_1")
             self._state_for_locked(self._active_robot)
@@ -361,7 +374,19 @@ class MockAdapter(SimAdapter):
 
     def get_active_robot(self) -> str:
         with self._state_lock:
-            return self._active_robot
+            return getattr(self._robot_context, "robot_id", self._active_robot)
+
+    @contextmanager
+    def bind_robot(self, robot_id: str):
+        previous = getattr(self._robot_context, "robot_id", None)
+        self._robot_context.robot_id = str(robot_id)
+        try:
+            yield self
+        finally:
+            if previous is None:
+                del self._robot_context.robot_id
+            else:
+                self._robot_context.robot_id = previous
 
     @property
     def realtime_factor(self) -> float:
@@ -525,7 +550,7 @@ class MockAdapter(SimAdapter):
 
     def get_state(self) -> VehicleState:
         with self._state_lock:
-            state = self._state_for_locked(self._active_robot)
+            state = self._state_for_locked(self.get_active_robot())
             position = Position(*state["position"])
             return VehicleState(
                 armed=bool(state["armed"]),
@@ -540,7 +565,7 @@ class MockAdapter(SimAdapter):
 
     def get_position(self) -> Position:
         with self._state_lock:
-            state = self._state_for_locked(self._active_robot)
+            state = self._state_for_locked(self.get_active_robot())
             return Position(*state["position"])
 
     def get_gps(self) -> GPSPosition:
@@ -549,21 +574,21 @@ class MockAdapter(SimAdapter):
 
     def get_battery(self) -> tuple:
         with self._state_lock:
-            return tuple(self._state_for_locked(self._active_robot)["battery"])
+            return tuple(self._state_for_locked(self.get_active_robot())["battery"])
 
     def is_armed(self) -> bool:
         with self._state_lock:
-            return bool(self._state_for_locked(self._active_robot)["armed"])
+            return bool(self._state_for_locked(self.get_active_robot())["armed"])
 
     def is_in_air(self) -> bool:
         with self._state_lock:
-            return bool(self._state_for_locked(self._active_robot)["in_air"])
+            return bool(self._state_for_locked(self.get_active_robot())["in_air"])
 
     def arm(self) -> ActionResult:
         if not self._connected:
             return ActionResult(False, "Not connected")
         with self._state_lock:
-            state = self._state_for_locked(self._active_robot)
+            state = self._state_for_locked(self.get_active_robot())
             state["armed"] = True
             self._sync_active_cache_locked()
         return ActionResult(True, "ARM (mock dynamics)")
@@ -572,7 +597,7 @@ class MockAdapter(SimAdapter):
         if not self._connected:
             return ActionResult(False, "Not connected")
         with self._physics_condition:
-            state = self._state_for_locked(self._active_robot)
+            state = self._state_for_locked(self.get_active_robot())
             self._interrupt_locked(state, brake=False)
             state["armed"] = False
             self._sync_active_cache_locked()

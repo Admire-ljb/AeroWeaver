@@ -12,12 +12,13 @@ def _normalize_robot_id(robot_id: str) -> str:
 class UAVAgentRuntime:
     """Expose skill dispatch while preventing an agent from controlling peers."""
 
-    def __init__(self, runtime, robot_id: str):
+    def __init__(self, runtime, robot_id: str, role: str = ""):
         owner = _normalize_robot_id(robot_id)
         if not owner or owner == "COMMANDER":
             raise ValueError("A UAV agent runtime requires a physical UAV owner")
         self._runtime = runtime
         self.robot_id = owner
+        self.role = str(role or "")
 
     def dispatch_skill(self, step: dict) -> ExecutionResult:
         requested = _normalize_robot_id((step or {}).get("robot") or self.robot_id)
@@ -36,5 +37,7 @@ class UAVAgentRuntime:
 
         owned_step = dict(step or {})
         owned_step["robot"] = self.robot_id
+        if self.role:
+            owned_step["role"] = self.role
         owned_step["parameters"] = dict(owned_step.get("parameters") or {})
         return self._runtime.dispatch_skill(owned_step)

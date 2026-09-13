@@ -1,11 +1,14 @@
 # Lightweight dependencies for user mock mode Docker image.
 # Full PX4/Gazebo/vector-memory experiments should use requirements/base.txt.
 numpy>=1.24.0
+mpe2==1.1.0  # reuse audited scenario reward functions; Mock remains the simulator
 pyyaml>=6.0
 python-dotenv>=1.0.0
 requests>=2.28.0
+msgpack>=1.0.0,<2.0  # enables runtime connection to a remote AirSim server
 flask>=3.0.0
 flask-socketio>=5.3.0
 flask-cors>=4.0.0
 websocket-client>=1.8.0
 openai>=1.0.0
+opencv-python-headless==4.10.0.84  # required by AirSim camera and scene JPEG conversion

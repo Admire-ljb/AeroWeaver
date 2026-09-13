@@ -54,7 +54,7 @@ class PointMassDynamics:
         damping: float = 0.35,
         mass: float = 1.0,
         max_acceleration: float = 8.0,
-        response_time: float = 0.35,
+        response_time: float = 0.22,
         arrival_tolerance: float = 0.08,
     ):
         self.dt = max(0.005, float(dt))

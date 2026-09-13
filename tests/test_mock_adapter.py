@@ -8,6 +8,49 @@ from adapters.mock_adapter import MockAdapter
 from adapters.mock_dynamics import PointMassDynamics
 
 
+def test_bound_mock_getters_and_commands_do_not_share_active_robot():
+    adapter = MockAdapter()
+    barrier = threading.Barrier(2)
+    results = {}
+    adapter.connect()
+    adapter.seed_fleet({"UAV_1": {"position": [10, 0, -5]}, "UAV_2": {"position": [20, 0, -5]}})
+    def worker(owner, speed):
+        with adapter.bind_robot(owner):
+            adapter.set_active_robot(owner)
+            barrier.wait(timeout=2)
+            results[owner] = adapter.get_position().north
+            adapter.set_velocity_body(speed, 0, 0)
+    try:
+        threads = [threading.Thread(target=worker, args=("UAV_1", 1)), threading.Thread(target=worker, args=("UAV_2", 2))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=3)
+            assert not thread.is_alive()
+        assert results == {"UAV_1": 10, "UAV_2": 20}
+        snapshot = adapter.get_robot_snapshot()
+        assert snapshot["UAV_1"]["command_velocity"] == [1, 0, 0]
+        assert snapshot["UAV_2"]["command_velocity"] == [2, 0, 0]
+        assert adapter.get_active_robot() == "UAV_1"
+    finally:
+        adapter.disconnect()
+
+
+def test_persistent_motion_continues_between_decisions():
+    adapter = MockAdapter(realtime_factor=1)
+    adapter.connect()
+    try:
+        adapter.set_robot_position("UAV_1", 0, 0, -5, in_air=True)
+        adapter.set_velocity_ned_for("UAV_1", 2, 0, 0)
+        positions = []
+        for _ in range(8):
+            time.sleep(0.075)
+            positions.append(adapter.get_position().north)
+        assert all(b > a for a, b in zip(positions, positions[1:]))
+    finally:
+        adapter.disconnect()
+
+
 def wait_until(predicate, timeout=1.5, interval=0.005):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

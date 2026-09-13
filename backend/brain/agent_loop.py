@@ -18,12 +18,13 @@ brain/agent_loop.py
 """
 
 import json
-import json
 import re
 import time
+import uuid
 import logging
 from pathlib import Path
 from datetime import datetime
+from memory.roles import normalize_role
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +403,10 @@ class AgentLoop:
         on_stream=None,      # callback(token_str) — LLM streaming 回调
         stop_event=None,     # threading.Event, 设置后停止
         experience_store=None,  # VectorStore 实例，用于检索相似经验
+        experience_memory=None,  # Shared outcome/vote/trace memory
+        agent_id="UAV_1",
+        agent_role="agent",
+        mission_id=None,
     ):
         self.goal = goal
         self.llm = llm_client
@@ -416,6 +421,12 @@ class AgentLoop:
         self.on_complete = on_complete or (lambda *a: None)
         self.stop_event = stop_event
         self.experience_store = experience_store  # VectorStore 实例
+        self.experience_memory = experience_memory
+        self.agent_id = str(agent_id or "UAV_1")
+        self.agent_role = normalize_role(agent_role)
+        self.mission_id = str(mission_id or f"agent-{uuid.uuid4()}")
+        self._experience_finalized = False
+        self._last_policy = {}
 
         self.action_history = []
         self.runtime_tactic = ""  # 运行时生成的战术方案
@@ -425,6 +436,12 @@ class AgentLoop:
     def run(self):
         """主循环: 观察→思考→行动→反思, 直到结束。"""
         logger.info(f"[AgentLoop] 开始: {self.goal}")
+        if self.experience_memory:
+            try:
+                self.experience_memory.begin_mission(self.mission_id, self.goal, [self.agent_id])
+            except Exception as exc:
+                logger.warning("[AgentLoop] experience memory start failed: %s", exc)
+
 
         # 重置报告累积器
         try:
@@ -549,6 +566,12 @@ class AgentLoop:
                 similar_experiences=similar_experiences,
             )
 
+            user_prompt += "\nCandidate format: when multiple actions are plausible, include candidates with candidate_id, skill, robot, and parameters. Use only registered skills."
+            if self.experience_memory:
+                try:
+                    user_prompt += "\n\n## Shared swarm experience\n" + self.experience_memory.render_context(self.goal, world_state_str, self.agent_id, self.agent_role)
+                except Exception:
+                    pass
             # 运行时战术: 当连续重复行为被检测到, 要求 LLM 先生成执行方案
             if not self.runtime_tactic and len(self.action_history) >= 3:
                 recent_skills = [h["skill"] for h in self.action_history[-3:]]
@@ -617,7 +640,9 @@ class AgentLoop:
 
             thinking = output.get("thinking", "")
             decision = output.get("decision", "act")
-            action = output.get("action", {})
+            action, policy = self._adapt_action(output, world_state_str)
+            output["action"] = action
+            output["policy"] = policy
             reflection = output.get("reflection")
             progress = output.get("goal_progress", "")
 
@@ -668,6 +693,7 @@ class AgentLoop:
                         "success": False, "error": result.error_msg,
                         "output": None, "cost_time": 0, "reflection": reflection,
                     })
+                    self._record_experience_step(world_state_str, action, result, policy)
                     continue
 
             step_data = {"skill": skill_name, "robot": robot_id, "parameters": parameters}
@@ -691,6 +717,7 @@ class AgentLoop:
                 "reflection": reflection,
             })
 
+            self._record_experience_step(world_state_str, action, result, policy)
             status = "OK" if result.success else f"FAIL({result.error_msg})"
             logger.info(f"[AgentLoop] {skill_name} → {status} ({result.cost_time:.1f}s)")
 
@@ -783,6 +810,140 @@ class AgentLoop:
         except Exception as e:
             logger.error("[AgentLoop] 安全返航异常: %s", e)
 
+    def _adapt_action(self, output: dict, state_text: str) -> tuple[dict, dict]:
+        """Apply provider log-probabilities and shared advantages to safe candidates."""
+        raw_action = dict(output.get("action") or {})
+        raw_candidates = output.get("candidates")
+        if not isinstance(raw_candidates, list) or not raw_candidates:
+            raw_candidates = [{
+                "candidate_id": "C1",
+                "skill": raw_action.get("skill", ""),
+                "robot": raw_action.get("robot", self.agent_id),
+                "parameters": dict(raw_action.get("parameters") or {}),
+            }]
+        available = set()
+        if self.skill_registry:
+            try:
+                available = {
+                    str(item.get("name"))
+                    for item in self.skill_registry.get_skill_catalog()
+                    if item.get("name")
+                }
+            except Exception:
+                available = set()
+        candidates = []
+        for index, value in enumerate(raw_candidates):
+            if not isinstance(value, dict):
+                continue
+            item = dict(value)
+            skill = str(item.get("skill") or "")
+            if not skill or (available and skill not in available):
+                continue
+            item.setdefault("candidate_id", f"C{index + 1}")
+            item.setdefault("robot", self.agent_id)
+            item["parameters"] = dict(item.get("parameters") or {})
+            candidates.append(item)
+        if not candidates:
+            return raw_action, {}
+        if self.experience_memory and len(candidates) > 1 and hasattr(self.llm, "rank_candidates"):
+            try:
+                rank_prompt = [
+                    {
+                        "role": "system",
+                        "content": "Rank only the typed candidate IDs. Never invent an action or code.",
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "task": self.goal,
+                                "state": state_text,
+                                "candidates": [
+                                    {
+                                        "candidate_id": item["candidate_id"],
+                                        "skill": item["skill"],
+                                        "robot": item.get("robot", self.agent_id),
+                                    }
+                                    for item in candidates
+                                ],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                ]
+                provider_scores = self.llm.rank_candidates(
+                    rank_prompt, [str(item["candidate_id"]) for item in candidates]
+                )
+                for item in candidates:
+                    item["base_logprob"] = provider_scores.get("logprobs", {}).get(
+                        str(item["candidate_id"]), item.get("base_logprob", 0.0)
+                    )
+            except Exception as exc:
+                logger.info("[AgentLoop] candidate log-probability unavailable: %s", exc)
+        if not self.experience_memory:
+            return raw_action, {}
+        policy = self.experience_memory.rank_candidates(
+            task=self.goal,
+            state=state_text,
+            candidates=candidates,
+            agent_id=self.agent_id,
+            role=self.agent_role,
+            team_state={
+                "occupied_skills": [item.get("skill") for item in self.action_history[-2:]]
+            },
+        )
+        selected = policy.get("selected") or {}
+        if not selected.get("skill"):
+            return raw_action, policy
+        policy["selected_id"] = selected.get("candidate_id")
+        action = {
+            "skill": selected.get("skill"),
+            "robot": selected.get("robot_id") or selected.get("robot") or self.agent_id,
+            "parameters": dict(selected.get("parameters") or {}),
+        }
+        return action, policy
+
+    def _record_experience_step(
+        self,
+        state_text: str,
+        action: dict,
+        result,
+        policy: dict | None = None,
+    ) -> None:
+        if not self.experience_memory:
+            return
+        policy = policy or {}
+        selected = policy.get("selected") or {}
+        trace = {
+            "quality": 1.0 if getattr(result, "success", False) else -0.5,
+            "progress": 1.0 if getattr(result, "success", False) else 0.0,
+            "cost_time": getattr(result, "cost_time", 0.0),
+            "error": str(getattr(result, "error_msg", "") or "")[:240],
+            "output": str(getattr(result, "output", "") or "")[:240],
+        }
+        try:
+            reward_value = float(getattr(result, "reward", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            reward_value = 0.0
+        try:
+            self.experience_memory.record_step(
+                mission_id=self.mission_id,
+                task=self.goal,
+                state=state_text,
+                action_id=str(policy.get("selected_id") or action.get("skill") or "unknown"),
+                skill=str(action.get("skill") or ""),
+                agent_id=self.agent_id,
+                role=self.agent_role,
+                success=bool(getattr(result, "success", False)),
+                reward=reward_value,
+                base_logprob=selected.get("base_logprob", 0.0),
+                trace=trace,
+                metadata={"iteration": self.iteration},
+            )
+        except Exception as exc:
+            logger.warning("[AgentLoop] experience step write failed: %s", exc)
+
+
     def _update_memory(self, success):
         """
         任务结束后完整的反思-进化链路:
@@ -791,6 +952,21 @@ class AgentLoop:
         3. 更新 SKILLS.md (技能成功率/推荐参数)
         4. 检查是否有重复模式 → 自动生成新软技能
         """
+        if self.experience_memory and not self._experience_finalized:
+            try:
+                successful = sum(1 for item in self.action_history if item.get("success"))
+                total = len(self.action_history)
+                self.experience_memory.finalize_mission(
+                    mission_id=self.mission_id,
+                    success=bool(success),
+                    votes={self.agent_id: bool(success)},
+                    trace_summary={"progress": successful / total if total else 0.0},
+                    overall_reward=1.0 if success else -1.0,
+                )
+                self._experience_finalized = True
+            except Exception as exc:
+                logger.warning("[AgentLoop] experience finalization failed: %s", exc)
+                self._experience_finalized = True
         # ── 步骤 1: LLM 反思 ─────────────────────────────────────────
         reflection_result = None
         try:

@@ -73,6 +73,30 @@ def test_chat_rejects_empty_streamed_response():
         make_client(max_retries=0).chat([{"role": "user", "content": "ping"}])
 
 
+@pytest.mark.parametrize("thinking", [None, {"type": "enabled"}])
+def test_flash_alias_sets_thinking_mode_on_selector_request(thinking):
+    provider = {
+        "api_type": "openai_compat",
+        "base_url": "https://api.deepseek.com",
+        "api_key": "test-key",
+        "timeout": 5,
+    }
+    if thinking is not None:
+        provider["thinking"] = thinking
+    client = LLMClient(provider, "deepseek-flash")
+    response = FakeResponse([
+        b'data: {"choices":[{"delta":{"content":"{\\"option_index\\":0}"}}]}\n',
+        b"data: [DONE]\n",
+    ])
+    with patch("llm_client.urllib.request.urlopen", return_value=response) as urlopen:
+        reply = client.chat([{"role": "user", "content": "Select an option."}], max_tokens=100)
+    payload = json.loads(urlopen.call_args.args[0].data)
+    assert payload["model"] == "deepseek-flash"
+    assert payload["max_tokens"] == 100
+    assert payload["thinking"] == (thinking or {"type": "disabled"})
+    assert json.loads(reply) == {"option_index": 0}
+
+
 def test_chat_reports_dns_failure_after_retry_budget():
     dns_error = urllib.error.URLError(
         socket.gaierror(-3, "Temporary failure in name resolution")
@@ -126,3 +150,35 @@ def test_authentication_error_is_not_retried():
         make_client().chat([{"role": "user", "content": "ping"}])
 
     assert urlopen.call_count == 1
+
+
+def test_rank_candidates_extracts_allowlisted_logprobs():
+    body = json.dumps({
+        "choices": [{
+            "message": {"role": "assistant", "content": "C2"},
+            "logprobs": {
+                "content": [{
+                    "token": "C2",
+                    "logprob": -0.1,
+                    "top_logprobs": [
+                        {"token": "C1", "logprob": -1.7},
+                    ],
+                }],
+            },
+        }],
+    }).encode()
+
+    with patch(
+        "llm_client.urllib.request.urlopen",
+        return_value=FakeResponse(body=body),
+    ) as urlopen:
+        result = make_client().rank_candidates(
+            [{"role": "user", "content": "choose"}],
+            ["C1", "C2"],
+        )
+
+    assert result["selected_id"] == "C2"
+    assert result["logprobs"]["C2"] == pytest.approx(-0.1)
+    assert result["logprobs"]["C1"] == pytest.approx(-1.7)
+    payload = json.loads(urlopen.call_args.args[0].data)
+    assert payload["logprobs"] is True

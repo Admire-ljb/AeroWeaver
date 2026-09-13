@@ -1,0 +1,4 @@
+# Optional official Farama MPE2 environment suite.
+# AeroWeaver keeps the mock adapter as its default runtime.
+mpe2==1.1.0
+pettingzoo==1.27.0

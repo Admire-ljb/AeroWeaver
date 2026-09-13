@@ -41,7 +41,11 @@ def generate_body_md(adapter=None, sensor_bridge=None, skill_registry=None):
         vehicles = getattr(adapter, "supported_vehicles", [])
         if vehicles:
             sections.append(f"- 支持载具类型: {', '.join(vehicles)}")
-        connected = adapter.is_connected() if hasattr(adapter, "is_connected") else False
+        connected_attr = getattr(adapter, "is_connected", False)
+        try:
+            connected = bool(connected_attr() if callable(connected_attr) else connected_attr)
+        except Exception:
+            connected = False
         sections.append(f"- 连接状态: {'已连接' if connected else '未连接'}")
     else:
         sections.append("- 适配器: 未初始化")

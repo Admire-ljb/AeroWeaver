@@ -787,7 +787,7 @@ class SwarmAreaSearch(Skill):
             else:
                 visual_duration = max(0.1, min(float(requested_duration), 30.0))
 
-            frame_rate = 10.0
+            frame_rate = 30.0
             previous = dict(initial_positions)
             minimum_observed = minimum_separation(previous.values())
             max_formation_error = 0.0

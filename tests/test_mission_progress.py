@@ -34,6 +34,19 @@ def test_balance_movement_plan_gives_each_moving_agent_the_same_budget():
     assert segment_total == pytest.approx(12, abs=0.01)
 
 
+def test_balance_movement_plan_tolerates_non_object_parameters_from_llm():
+    plan = [
+        {"skill": "fly_relative", "parameters": []},
+        {"skill": "hover", "parameters": ["duration", 5]},
+    ]
+
+    balanced, distance = balance_movement_plan(plan, [0, 0, -5], 12)
+
+    assert distance == 0.0
+    assert balanced[0]["parameters"] == {}
+    assert balanced[1]["parameters"] == {}
+
+
 
 def test_world_step_increments_once_for_each_agent_decision():
     tracker = MissionProgressTracker()

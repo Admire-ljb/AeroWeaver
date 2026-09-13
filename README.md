@@ -93,6 +93,40 @@ Per-UAV execution channels and safety guards
 Mock | AirSim | PX4/Gazebo adapters
 ```
 
+## Role-Centric Experience and MPE2 Scenarios
+
+Experience records are keyed by a semantic `role` such as `searcher`, `tracker`,
+or `pursuer`; `agent_id` is retained only as an execution-instance and audit field.
+This lets interchangeable UAV instances share outcomes without treating `UAV_1`
+and `UAV_6` as different capabilities. The API exposes the catalog at
+`GET /api/environments/mpe` and can probe one local environment with
+`POST /api/environments/mpe/<scenario_id>/probe`.
+
+The optional `requirements/mpe2.txt` adapter registers the official Farama MPE2
+suite. It is the reproducible boundary for the MPE family; arbitrary research
+forks derived from MPE do not share one guaranteed package or entry-point API.
+
+| Scenario | Family | Semantic roles |
+| --- | --- | --- |
+| `simple` | debug | agent |
+| `simple_adversary` | deception | good_agent, adversary |
+| `simple_crypto` | communication | sender, receiver, eavesdropper |
+| `simple_formation` | formation | formation_member |
+| `simple_line` | formation | formation_member |
+| `simple_push` | interaction | pusher, adversary |
+| `simple_reference` | communication | speaker, listener |
+| `simple_speaker_listener` | communication | speaker, listener |
+| `simple_spread` | coverage | searcher |
+| `simple_tag` | pursuit | pursuer, evader |
+| `simple_world_comm` | partial observation | leader_adversary, adversary, good_agent |
+| `collect_treasure` | transport | collector, depositor |
+
+Install the adapter only when these environments are needed:
+
+```powershell
+pip install -r requirements/mpe2.txt
+```
+
 ## Quick Start With Mock Vehicles
 
 Requirements:
@@ -140,14 +174,14 @@ Mock vehicles use a three-axis point-mass model inspired by MPE: physical dampin
 
 ## AirSim
 
-Set AirSim to listen on an address reachable by the AeroWeaver backend. The
-vehicle names should follow `Drone_1`, `Drone_2`, and so on. The current fleet
-manager supports a reserve pool of up to ten vehicles and exposes only the
-active subset in the Web console.
+The default server path is the dependency-light MPE-style mock runtime. To
+connect an optional UE4/AirSim backend, start AirSim on an address reachable by
+the AeroWeaver backend, open the map `Settings` panel, enter the UE4 IP and RPC
+port (normally `41451`), and click `Connect AirSim`. A failed connection keeps
+the mock runtime active. The vehicle names should follow `Drone_1`, `Drone_2`,
+and so on; the fleet manager exposes only the active subset in the Web console.
 
-Start AirSim. AeroWeaver will connect to the simulator when the backend starts.
-The following settings are optional when you need to change the simulator
-address, active UAV count, or camera relay:
+For headless startup, the same backend can still be selected through `.env`:
 
 ```dotenv
 SIM_ADAPTER=airsim
@@ -282,6 +316,7 @@ by Manual mode remain active.
 Backend tests:
 
 ```bash
+pip install -r requirements/mock.txt -r requirements/experiments.txt pytest
 python -m pytest
 ```
 
@@ -351,3 +386,16 @@ behavior, and operator supervision independently of the LLM.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Shared Swarm Experience
+
+AeroWeaver maintains a shared, persistent experience memory for multi-UAV
+decision making:
+
+- typed skill candidates are ranked from provider log-probabilities and
+  retrieved advantages;
+- successful and failed executions contribute trajectory-shaped rewards;
+- agent results, termination votes, and round evidence update mission returns;
+- the runtime only dispatches registered skills and never executes model code.
+
+The memory is stored as JSONL under `backend/data/swarm_experience/` by default

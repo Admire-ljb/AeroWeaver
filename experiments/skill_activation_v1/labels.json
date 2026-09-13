@@ -1,0 +1,24 @@
+{
+  "status":"provisional_developer_authored_not_human_reviewed",
+  "scope":"Capability requirements at mission-role level, not a required unique action sequence. Optional helpers do not count as mandatory.",
+  "requirements":{
+    "coverage/searcher":{"required_groups":[["cover_landmark"]],"useful":["cover_landmark","explore_local","hold_position"]},
+    "pursuit/pursuer":{"required_groups":[["pursue_target"]],"useful":["pursue_target","follow_peer","explore_local","hold_position"]},
+    "pursuit/evader":{"required_groups":[["evade_peer"]],"useful":["evade_peer","return_in_bounds","explore_local","hold_position"]},
+    "navigation/speaker":{"required_groups":[["signal_goal"]],"useful":["signal_goal","hold_position"]},
+    "navigation/listener":{"required_groups":[["follow_signal"]],"useful":["follow_signal","explore_local","hold_position"]},
+    "private_communication/sender":{"required_groups":[["encode_message"]],"useful":["encode_message","hold_position"]},
+    "private_communication/receiver":{"required_groups":[["decode_message"]],"useful":["decode_message","hold_position"]},
+    "private_communication/eavesdropper":{"required_groups":[["guess_message"]],"useful":["guess_message","hold_position"]},
+    "circle/formation_member":{"required_groups":[["take_formation_slot"]],"useful":["take_formation_slot","explore_local","hold_position"]},
+    "line/formation_member":{"required_groups":[["take_formation_slot"]],"useful":["take_formation_slot","explore_local","hold_position"]},
+    "world_communication/leader":{"required_groups":[["pursue_target"],["signal_target"]],"useful":["pursue_target","signal_target","follow_peer","explore_local","hold_position"]},
+    "world_communication/pursuer":{"required_groups":[["pursue_target"]],"useful":["pursue_target","follow_peer","explore_local","hold_position"]},
+    "world_communication/forager":{"required_groups":[["seek_food"],["seek_cover","evade_peer"]],"useful":["seek_food","seek_cover","evade_peer","explore_local","hold_position"]},
+    "collection/collector":{"required_groups":[["collect_treasure"],["deliver_treasure"]],"useful":["collect_treasure","deliver_treasure","explore_local","hold_position"]},
+    "collection/deposit_red":{"required_groups":[["meet_collector"]],"useful":["meet_collector","explore_local","hold_position"]},
+    "collection/deposit_blue":{"required_groups":[["meet_collector"]],"useful":["meet_collector","explore_local","hold_position"]},
+    "concealment/informed":{"required_groups":[["approach_goal"]],"useful":["approach_goal","approach_decoy","explore_local","hold_position"]},
+    "concealment/adversary":{"required_groups":[["infer_goal"]],"useful":["infer_goal","explore_local","hold_position"]}
+  }
+}

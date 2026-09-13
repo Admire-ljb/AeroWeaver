@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import threading
 from copy import deepcopy
+from memory.roles import infer_role, normalize_role
 
 
 _MOVEMENT_SKILLS = {"fly_to", "fly_relative"}
@@ -37,7 +38,15 @@ def balance_movement_plan(
     total = 0.0
     for index, step in enumerate(plan):
         skill = str(step.get("skill") or "")
-        parameters = step.setdefault("parameters", {})
+        # LLM plans occasionally emit malformed parameter containers (for
+        # example ``[]`` instead of a JSON object).  Treat those as missing
+        # parameters so mission balancing can continue and the skill runtime
+        # can return a normal validation failure instead of aborting the
+        # whole UAV assignment with ``list has no attribute get``.
+        parameters = step.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {}
+            step["parameters"] = parameters
         if skill == "fly_to":
             target = _position(parameters.get("target_position"))
             vector = [target[i] - cursor[i] for i in range(3)]
@@ -65,7 +74,10 @@ def balance_movement_plan(
     cursor = _position(current_position)
     segment_map = {index: (skill, vector, length) for index, skill, vector, length in segments}
     for index, step in enumerate(plan):
-        parameters = step.setdefault("parameters", {})
+        parameters = step.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = {}
+            step["parameters"] = parameters
         segment = segment_map.get(index)
         if not segment:
             continue
@@ -91,6 +103,12 @@ class MissionProgressTracker:
     def __init__(self):
         self._lock = threading.RLock()
         self._mission: dict = {}
+        self._experience_memory = None
+        self._record_experience = True
+
+    def set_experience_memory(self, experience_memory) -> None:
+        """Attach shared experience memory after application bootstrap."""
+        self._experience_memory = experience_memory
 
     def start(
         self,
@@ -104,14 +122,17 @@ class MissionProgressTracker:
         operator_report: str = "",
         max_world_steps: int = 0,
         scenario: dict | None = None,
+        record_experience: bool = True,
     ) -> dict:
         agents = {}
+        task_description = str(description or "")
         for assignment in assignments:
             robot_id = str(assignment.get("robot_id") or "")
             if not robot_id:
                 continue
             agents[robot_id] = {
                 "robot_id": robot_id,
+                "role": normalize_role(assignment.get("role"), default=infer_role(task=assignment.get("task"))),
                 "task": str(assignment.get("task") or ""),
                 "status": "initializing",
                 "decision_count": 0,
@@ -186,10 +207,18 @@ class MissionProgressTracker:
                             normalized[key] = condition[key]
                 normalized_conditions.append(normalized)
 
+        self._record_experience = bool(record_experience)
+        if self._experience_memory and self._record_experience:
+            try:
+                self._experience_memory.begin_mission(
+                    mission_id, task_description, [item.get("robot_id") for item in assignments]
+                )
+            except Exception:
+                pass
         with self._lock:
             self._mission = {
                 "mission_id": str(mission_id),
-                "description": str(description),
+                "description": task_description,
                 "strategy": str(strategy),
                 "status": "initializing",
                 "world_step": 0,
@@ -272,6 +301,16 @@ class MissionProgressTracker:
                 agent["status"] = "cancelled"
                 agent["termination_vote"] = None
                 agent["termination_reason"] = self._mission["cancel_reason"]
+            if self._experience_memory and self._record_experience:
+                try:
+                    self._experience_memory.finalize_mission(
+                        mission_id=mission_id,
+                        success=False,
+                        trace_summary={"quality": -0.5},
+                        overall_reward=-1.0,
+                    )
+                except Exception:
+                    pass
             return self._snapshot_locked()
 
     def timeout(self, mission_id: str, reason: str, evidence: dict | None = None) -> dict:
@@ -291,6 +330,17 @@ class MissionProgressTracker:
                 agent["termination_vote"] = False
                 agent["termination_reason"] = self._mission["termination_reason"]
                 agent["unmet_conditions"] = ["Mission completion condition was not reached before timeout."]
+            if self._experience_memory and self._record_experience:
+                try:
+                    self._experience_memory.finalize_mission(
+                        mission_id=mission_id,
+                        success=False,
+                        votes={item["robot_id"]: False for item in self._mission.get("agents", {}).values()},
+                        trace_summary={"quality": -0.5},
+                        overall_reward=-1.0,
+                    )
+                except Exception:
+                    pass
             return self._snapshot_locked()
 
     def record_round(
@@ -310,6 +360,11 @@ class MissionProgressTracker:
             )
             if evidence:
                 self._mission["latest_evidence"] = deepcopy(evidence)
+                if self._experience_memory and self._record_experience:
+                    try:
+                        self._experience_memory.record_trace(mission_id, evidence)
+                    except Exception:
+                        pass
             return self._snapshot_locked()
 
     def record_decision(self, mission_id: str, robot_id: str) -> dict:
@@ -370,6 +425,23 @@ class MissionProgressTracker:
                     2,
                 )
                 agent["last_summary"] = str(summary or "")
+            if self._experience_memory and self._record_experience:
+                try:
+                    self._experience_memory.record_agent_result(
+                        mission_id=mission_id,
+                        agent_id=robot_id,
+                        role=(agent or {}).get("role", ""),
+                        success=success,
+                        moved_distance_m=moved_distance_m,
+                        summary=summary,
+                        task=self._mission.get("description", ""),
+                        state=str(self._mission.get("latest_evidence") or ""),
+                        action_id=f"mission-result:{robot_id}:{self._mission.get('round_index', 0)}",
+                        skill="mission_result",
+                        trace={"quality": 1.0 if success else -0.5, "progress": 1.0 if success else 0.0},
+                    )
+                except Exception:
+                    pass
             results = [item.get("success") for item in self._mission.get("agents", {}).values()]
             if results and all(value is not None for value in results):
                 self._mission["status"] = "awaiting_consensus"
@@ -397,6 +469,19 @@ class MissionProgressTracker:
                 agent["termination_evidence"] = [str(item) for item in (evidence or [])][:6]
                 agent["unmet_conditions"] = [str(item) for item in (unmet_conditions or [])][:6]
                 agent["status"] = "ready" if ready_to_end else "continuing"
+            if self._experience_memory and self._record_experience:
+                try:
+                    self._experience_memory.record_vote(
+                        mission_id=mission_id,
+                        agent_id=robot_id,
+                        role=(agent or {}).get("role", ""),
+                        ready=ready_to_end,
+                        reason=reason,
+                        evidence=evidence or [],
+                        unmet_conditions=unmet_conditions or [],
+                    )
+                except Exception:
+                    pass
 
             agents = list(self._mission.get("agents", {}).values())
             votes = [item.get("termination_vote") for item in agents]
@@ -410,6 +495,17 @@ class MissionProgressTracker:
                 self._mission["status"] = "awaiting_consensus"
             else:
                 self._mission["status"] = "consensus_pending"
+            if self._experience_memory and self._record_experience and votes and all(vote is not None for vote in votes):
+                try:
+                    progress = sum(item.get("success") is True for item in agents) / len(agents)
+                    self._experience_memory.finalize_mission(
+                        mission_id=mission_id,
+                        success=bool(unanimous and all(item.get("success") is True for item in agents)),
+                        votes={item["robot_id"]: item.get("termination_vote") for item in agents},
+                        trace_summary={"progress": progress},
+                    )
+                except Exception:
+                    pass
             return self._snapshot_locked()
 
     def set_report(self, mission_id: str, phase: str, report: str) -> dict:

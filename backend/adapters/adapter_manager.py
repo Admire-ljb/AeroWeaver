@@ -83,7 +83,7 @@ _register_builtins()
 
 # ── 公共接口 ──────────────────────────────────────────────────────────────────
 
-def init_adapter(adapter_type: str = "px4", connection_str: str = "", timeout: float = 15.0) -> bool:
+def init_adapter(adapter_type: str = "mock", connection_str: str = "", timeout: float = 15.0) -> bool:
     """
     初始化并连接仿真适配器。
 
@@ -127,6 +127,27 @@ def init_adapter(adapter_type: str = "px4", connection_str: str = "", timeout: f
             _adapter.connect()
 
     return ok
+
+
+def init_startup_adapter(adapter_type: str = "mock", connection_str: str = "", timeout: float = 15.0) -> bool:
+    """Use Mock/MPE when a configured AirSim backend is unavailable at startup."""
+    if adapter_type not in {"airsim", "airsim_physics"}:
+        return init_adapter(adapter_type, connection_str, timeout)
+    try:
+        ok = init_adapter(adapter_type, connection_str, timeout)
+        if ok:
+            return True
+    except Exception:
+        logger.warning("AirSim startup connection failed", exc_info=True)
+    # Reinitialize through the manager so connection metadata and robot routing
+    # agree with the active adapter, including when the AirSim SDK is missing.
+    if _adapter is not None:
+        try:
+            _adapter.disconnect()
+        except Exception:
+            logger.debug("Failed to close unavailable startup adapter", exc_info=True)
+    logger.warning("AirSim unavailable at startup; activating Mock/MPE control")
+    return init_adapter("mock", connection_str="mock://", timeout=5.0)
 
 
 def get_adapter() -> Optional[SimAdapter]:
@@ -216,7 +237,13 @@ def robot_adapter_context(robot_id: str):
     previous = getattr(_adapter_context, "robot_id", None)
     _adapter_context.robot_id = str(robot_id or "UAV_1")
     try:
-        yield get_adapter()
+        adapter = get_adapter()
+        bind = getattr(adapter, "bind_robot", None)
+        if callable(bind):
+            with bind(_adapter_context.robot_id):
+                yield adapter
+        else:
+            yield adapter
     finally:
         if previous is None:
             try:
@@ -256,6 +283,6 @@ def switch_adapter(adapter_type: str, connection_str: str = "", timeout: float =
     """
     global _adapter
     _close_robot_adapters()
-    if _adapter and _adapter.is_connected():
+    if _adapter and _adapter_is_connected(_adapter):
         _adapter.disconnect()
     return init_adapter(adapter_type, connection_str, timeout)

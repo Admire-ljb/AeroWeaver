@@ -188,6 +188,8 @@ export default function CockpitView({
         if (!response.ok) throw new Error(await response.text());
         return response.json();
       })
+      // Keep the cockpit on the Unreal Pixel Streaming/WebRTC path. The
+      // endpoint only binds the requested camera view in the scene.
       .then(() => setPixelStatus('playing'))
       .catch((error) => {
         if (error.name !== 'AbortError') setPixelStatus('fallback');
@@ -268,7 +270,10 @@ export default function CockpitView({
   const downImg = sensorCameras?.down?.image;
   const cameraUrl = (view) => `${API_BASE}/api/sensor/camera/stream?view=${encodeURIComponent(view)}&robot_id=${encodeURIComponent(robotId)}`;
   const cameraSnapshotUrl = (view) => `${API_BASE}/api/sensor/camera?view=${encodeURIComponent(view)}&robot_id=${encodeURIComponent(robotId)}`;
-  const pixelStreamingUrl = `${window.location.protocol}//${window.location.hostname}:8880/?autoconnect&noWatermark`;
+  // The browser loads player.html from Cirrus' HTTP port. StreamerPort (8888)
+  // is reserved for the Unreal process and cannot serve the player page.
+  const pixelStreamingPort = import.meta.env.VITE_PIXEL_STREAMING_HTTP_PORT || '8080';
+  const pixelStreamingUrl = `${window.location.protocol}//${window.location.hostname}:${pixelStreamingPort}/?autoconnect&noWatermark`;
   const pos = telemetry.position || { north: 0, east: 0, down: 0 };
   const battPct = telemetry.battery != null ? Math.round(telemetry.battery) : '--';
 

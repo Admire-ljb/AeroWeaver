@@ -69,7 +69,7 @@ PROVIDERS: dict[str, dict] = {
         "api_type":      "openai_compat",
         "base_url":      _env("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         "api_key":       _env("DEEPSEEK_API_KEY", ""),
-        "default_model": _env("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        "default_model": _env("DEEPSEEK_MODEL", "deepseek-v4.1-flash-expires-on-0910"),
         "timeout":       60,
     },
 

@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from adapters.airsim_adapter import AirSimAdapter
+from adapters.sim_adapter import ActionResult
 from skills.cognitive_skills import (
     Alert,
     AskUser,
@@ -215,6 +216,36 @@ class AirSimSafetyTests(unittest.TestCase):
         self.assertTrue(cockpit.success)
         self.assertGreater(self.adapter._hold_x, 5.0)
         self.assertGreater(self.adapter._hold_x, -50.0)
+
+    @patch("adapters.airsim_adapter.time.sleep", return_value=None)
+    def test_settle_active_fleet_activates_a_parked_reserve_uav(self, _sleep):
+        self.adapter._vehicle_names = ["Drone_1", "Drone_2"]
+        self.adapter._vehicle_spawn_poses = {
+            "Drone_1": (10.0, -10.0, -40.0),
+            "Drone_2": (508.0, 500.0, 80.0),
+        }
+        placed = {}
+
+        def record_pose(vehicle, x, y, z, yaw=0.0):
+            placed[vehicle] = (float(x), float(y), float(z))
+            self.adapter._hold_x = float(x)
+            self.adapter._hold_y = float(y)
+            self.adapter._hold_z = float(z)
+
+        self.adapter._set_vehicle_global_pose = record_pose
+        with patch.object(
+            self.adapter,
+            "_descend_to_hover_clearance",
+            return_value=ActionResult(True, "settled", {"ground_clearance": {}}),
+        ):
+            result = self.adapter.settle_active_fleet(2)
+
+        self.assertTrue(result.success)
+        self.assertEqual(placed["Drone_1"], (10.0, -10.0, -40.0))
+        self.assertEqual(
+            placed["Drone_2"],
+            self.adapter._activation_spawn(2),
+        )
 
     @patch("adapters.airsim_adapter.time.sleep", return_value=None)
     def test_cockpit_command_interrupts_active_fly_to_owner(self, _sleep):

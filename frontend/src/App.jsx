@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSocket } from './hooks/useSocket'
 import CockpitView from './components/CockpitView'
+import MotionMarker from './components/MotionMarker'
+import MockTaskControls from './components/MockTaskControls'
+import MockTaskOverlay from './components/MockTaskOverlay'
+import TrajectoryMemoryWorkspace from './components/TrajectoryMemoryWorkspace'
 import SkillPanel, { skillDescription, skillLabel } from './components/SkillPanel'
 import {
   createDemoTrajectorySamples,
@@ -343,31 +347,6 @@ function registrationPositionForUav(uav, total = DEFAULT_UAV_COUNT) {
   return [n, e, 0]
 }
 
-function defaultAirSimFleetPosition(index) {
-  const group = Math.floor(index / 2)
-  const side = index % 2
-  return [
-    10 + group * 30 + side * 10,
-    -10 + side * 20,
-    -10 - index * 2,
-  ]
-}
-
-function fleetRequestFromWorld(worldState, count) {
-  const robots = worldState?.robots || {}
-  return Array.from({ length: count }, (_, index) => {
-    const robotId = `UAV_${index + 1}`
-    const raw = robots[robotId]?.position
-    const position = Array.isArray(raw) && raw.length >= 3
-      ? raw.slice(0, 3).map((value) => Number(value))
-      : defaultAirSimFleetPosition(index)
-    return {
-      robot_id: robotId,
-      position: position.every(Number.isFinite) ? position : defaultAirSimFleetPosition(index),
-    }
-  })
-}
-
 function fallbackUavPosition(index, total) {
   if (SAMPLE_UAVS[index]) return SAMPLE_UAVS[index]
 
@@ -467,12 +446,13 @@ function buildUavMarkers(worldState, missionUavCount = 0, desiredUavCount = DEFA
         status: robot?.status || 'idle',
         battery: robot?.battery,
         groundClearance: robot?.ground_clearance,
+        role: worldState?.mock_task?.roles?.[id],
       }
     })
 
   const liveByLabel = new Map(liveMarkers.map((uav) => [uav.id, uav]))
   const targetCount = Math.max(
-    Math.round(Number(desiredUavCount) || Number(missionUavCount) || DEFAULT_UAV_COUNT),
+    Object.keys(worldState?.mock_task?.roles || {}).length || Math.round(Number(desiredUavCount) || Number(missionUavCount) || DEFAULT_UAV_COUNT),
     1,
   )
   const markers = Array.from({ length: targetCount }, (_, index) => {
@@ -725,7 +705,7 @@ function AirSimRelayScene({ language, sceneImage, sceneImageUrl }) {
 
   const label = {
     connecting: t('正在连接 AirSim 俯视场景', 'Connecting to AirSim aerial view'),
-    playing: t('AirSim 环境俯视', 'AirSim Aerial View'),
+    playing: t('空中相机俯视', 'Airborne Camera View'),
     error: t('AirSim 俯视流已断开', 'AirSim aerial feed disconnected'),
   }[status] || t('正在连接 AirSim 俯视场景', 'Connecting to AirSim aerial view')
 
@@ -794,6 +774,7 @@ function MissionMap({
   trajectoryRecording,
   trajectorySampleCount,
   tracksWorkspaceOpen,
+  mockTask,
 }) {
   const t = makeTranslator(language)
   const selectedUav = uavs.find((uav) => uav.id === selectedUavId)
@@ -1092,6 +1073,7 @@ function MissionMap({
                 </text>
               </>
             )}
+            <MockTaskOverlay task={mockTask} />
             {layerOptions.routes && trajectorySeries.map((series) => {
               const mapPoints = series.samples.map((sample) => ({
                 ...worldToMapPercent(sample.north_m, sample.east_m),
@@ -1155,17 +1137,19 @@ function MissionMap({
           )}
 
           {uavs.map((uav) => (
-            <button
+            <MotionMarker
               key={uav.id}
+              x={uav.x}
+              y={uav.y}
               type="button"
               className={`uav-marker ${uav.id === selectedUavId ? 'selected' : ''} ${activeFpv?.uavId === uav.id && showFpv ? 'has-fpv' : ''} ${uav.canExecute ? '' : 'virtual'}`}
-              style={{ left: `${uav.x}%`, top: `${uav.y}%`, '--uav-color': trajectoryColor(uav.id) }}
+              style={{ '--uav-color': trajectoryColor(uav.id) }}
               onClick={() => onSelectUav(uav)}
               aria-label={t(`选择 ${uav.id}`, `Select ${uav.id}`)}
             >
-              {layerOptions.labels && <span className="uav-label">{uav.id}</span>}
+              {layerOptions.labels && <span className="uav-label">{uav.id}{uav.role && <small className="mock-role-label">{uav.role.replaceAll('_', ' ')}</small>}</span>}
               <span className="uav-dot" />
-            </button>
+            </MotionMarker>
           ))}
           </div>
 
@@ -1248,16 +1232,110 @@ function MapLayerPanel({ language, layerOptions, onToggleLayer }) {
 function MapSettingsPanel({ language, desiredUavCount, liveUavCount, fleetSync, onApplyUavCount }) {
   const t = makeTranslator(language)
   const [draftCount, setDraftCount] = useState(desiredUavCount)
+  const [adapterStatus, setAdapterStatus] = useState(null)
+  const [airsimHost, setAirSimHost] = useState('')
+  const [airsimPort, setAirSimPort] = useState('41451')
+  const [adapterBusy, setAdapterBusy] = useState(false)
+  const [adapterMessage, setAdapterMessage] = useState('')
+
+  const refreshAdapter = useCallback(() => {
+    fetch(`${API_BASE}/api/adapter/status`)
+      .then((response) => response.json())
+      .then((data) => {
+        setAdapterStatus(data)
+        if (data.host) setAirSimHost(data.host)
+        if (data.port) setAirSimPort(String(data.port))
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     setDraftCount(desiredUavCount)
   }, [desiredUavCount])
 
+  useEffect(() => {
+    refreshAdapter()
+  }, [refreshAdapter])
+
   const setCount = (nextCount) => setDraftCount(Math.round(clamp(Number(nextCount) || 1, 1, MAX_UAV_COUNT)))
+
+  const connectAdapter = async (adapter) => {
+    setAdapterBusy(true)
+    setAdapterMessage('')
+    try {
+      const response = await fetch(`${API_BASE}/api/adapter/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(adapter === 'mock'
+          ? { adapter: 'mock' }
+          : { adapter: 'airsim', host: airsimHost.trim(), port: Number(airsimPort) || 41451 }),
+      })
+      const data = await response.json()
+      if (!response.ok || !data.ok) throw new Error(data.error || t('连接未完成', 'Connection failed'))
+      setAdapterMessage(adapter === 'mock'
+        ? t('已切回 MPE 风格 Mock 环境。', 'MPE-style mock runtime is active.')
+        : t(`已连接 UE4 / AirSim：${data.host}:${data.port}`, `Connected to UE4 / AirSim at ${data.host}:${data.port}`))
+      refreshAdapter()
+    } catch (error) {
+      setAdapterMessage(error.message)
+      refreshAdapter()
+    } finally {
+      setAdapterBusy(false)
+    }
+  }
+
+  const activeAdapter = String(adapterStatus?.adapter || 'mock').toLowerCase()
+  const airsimActive = activeAdapter.includes('airsim')
 
   return (
     <div className="map-popover settings-popover">
-      <div className="map-popover-title">{t('编队设置', 'Fleet Settings')}</div>
+      <div className="map-popover-title">{t('编队与仿真设置', 'Fleet & Simulator')}</div>
+
+      <div className="simulator-setting">
+        <div className="simulator-setting-head">
+          <span>{t('当前后端', 'Active Backend')}</span>
+          <strong className={airsimActive ? 'airsim' : 'mock'}>{airsimActive ? 'AirSim / UE4' : '3D Mock'}</strong>
+        </div>
+        <div className="setting-note">{t(
+          '默认使用本地 MPE 风格 Mock 环境；只有点击连接后才会访问 UE4 / AirSim。',
+          'The MPE-style mock runtime is the default. UE4 / AirSim is contacted only after you connect it here.',
+        )}</div>
+        <div className="airsim-connection-form">
+          <input
+            value={airsimHost}
+            onChange={(event) => setAirSimHost(event.target.value)}
+            placeholder={t('UE4 IP，例如 10.61.22.132', 'UE4 IP, e.g. 10.61.22.132')}
+            aria-label={t('UE4 IP 地址', 'UE4 IP address')}
+            spellCheck="false"
+          />
+          <input
+            value={airsimPort}
+            onChange={(event) => setAirSimPort(event.target.value.replace(/\D/g, '').slice(0, 5))}
+            placeholder="41451"
+            aria-label={t('AirSim RPC 端口', 'AirSim RPC port')}
+            inputMode="numeric"
+          />
+          <button
+            className="setting-apply"
+            disabled={adapterBusy || !airsimHost.trim()}
+            onClick={() => connectAdapter('airsim')}
+          >
+            {adapterBusy ? t('连接中...', 'Connecting...') : t('连接 AirSim', 'Connect AirSim')}
+          </button>
+        </div>
+        <button
+          className="setting-secondary"
+          disabled={adapterBusy || !airsimActive}
+          onClick={() => connectAdapter('mock')}
+        >
+          {t('切回 Mock / MPE', 'Use Mock / MPE')}
+        </button>
+        {adapterMessage && <div className="setting-note adapter-message">{adapterMessage}</div>}
+        {!airsimActive && <MockTaskControls language={language} />}
+      </div>
+
+      <div className="setting-divider" />
+
       <div className="setting-row">
         <span>{t('无人机数量', 'Fleet Size')}</span>
         <div className="stepper">
@@ -1271,8 +1349,8 @@ function MapSettingsPanel({ language, desiredUavCount, liveUavCount, fleetSync, 
         </div>
       </div>
       <div className="setting-note">{t(
-        `当前显示 ${liveUavCount} 架无人机。确认后从 10 架备用池中激活 UAV_1 至 UAV_${draftCount}；其余无人机停放到场地外，不在界面中显示。`,
-        `Currently showing ${liveUavCount} UAVs. Applying activates UAV_1 through UAV_${draftCount} from the 10-vehicle pool; reserve UAVs are parked outside the site and hidden from the interface.`,
+        `当前显示 ${liveUavCount} 架无人机。确认后激活 UAV_1 至 UAV_${draftCount}；在 Mock 模式下使用本地点质量动力学，在 AirSim 模式下同步 UE4 车辆。`,
+        `Currently showing ${liveUavCount} UAVs. Applying activates UAV_1 through UAV_${draftCount}; Mock uses local point-mass dynamics, while AirSim synchronizes UE4 vehicles.`,
       )}</div>
       {fleetSync?.message && (
         <div className={`setting-note ${fleetSync.status === 'error' ? 'error' : ''}`}>
@@ -1284,7 +1362,7 @@ function MapSettingsPanel({ language, desiredUavCount, liveUavCount, fleetSync, 
         disabled={fleetSync?.status === 'syncing'}
         onClick={() => onApplyUavCount(draftCount)}
       >
-        {fleetSync?.status === 'syncing' ? t('正在同步 AirSim...', 'Synchronizing AirSim...') : t('同步编队', 'Sync Fleet')}
+        {fleetSync?.status === 'syncing' ? t('正在同步编队...', 'Synchronizing fleet...') : t('同步编队', 'Sync Fleet')}
       </button>
     </div>
   )
@@ -1604,13 +1682,13 @@ function AgentDialogueWorkspace({ language, uavs, selectedAgentId, messages, com
   ]
   const agentIds = agents.map((agent) => agent.robotId)
   const activeAgentId = agentIds.includes(selectedAgentId) ? selectedAgentId : 'COMMANDER'
-  const rows = messages.filter((message) => (
+  const isCommander = activeAgentId === 'COMMANDER'
+  const rows = isCommander ? messages : messages.filter((message) => (
     message.robot_id === activeAgentId
     || message.sender === activeAgentId
     || message.receiver === activeAgentId
   ))
   const activeLinks = commLinks.filter((link) => link.status === 'active')
-  const isCommander = activeAgentId === 'COMMANDER'
   const progressAgents = commanderProgress?.agents || []
   const progressMetrics = commanderProgress?.metrics || []
 
@@ -2185,73 +2263,7 @@ function ReasoningWorkspace({ language, systemStatus, aiThinking, aiThoughts, ai
 }
 
 function MemoryWorkspace({ language }) {
-  const t = makeTranslator(language)
-  const [stats, setStats] = useState(null)
-  const [recent, setRecent] = useState([])
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
-  const [loading, setLoading] = useState(false)
-
-  const refresh = () => {
-    fetch(`${API_BASE}/api/memory/stats`).then((r) => r.json()).then((data) => setStats(data.layers || {})).catch(() => {})
-    fetch(`${API_BASE}/api/memory/recent`).then((r) => r.json()).then((data) => setRecent(data.items || [])).catch(() => {})
-  }
-
-  useEffect(() => {
-    refresh()
-  }, [])
-
-  const search = () => {
-    const text = query.trim()
-    if (!text) return
-    setLoading(true)
-    fetch(`${API_BASE}/api/memory/search`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: text, top_k: 8 }),
-    })
-      .then((r) => r.json())
-      .then((data) => setResults(data.items || []))
-      .catch(() => setResults([]))
-      .finally(() => setLoading(false))
-  }
-
-  return (
-    <div className="workspace-body">
-      <div className="ops-summary">
-        <div>
-          <strong>{t('经验记忆库', 'Experience Store')}</strong>
-          <span>{t('任务片段、技能经验与世界印象', 'Mission fragments, skill experience, and world impressions')}</span>
-        </div>
-        <button onClick={refresh}>{t('刷新', 'Refresh')}</button>
-      </div>
-
-      <div className="status-grid">
-        {Object.entries(stats || {}).map(([key, value]) => (
-          <div className="status-card" key={key}>
-            <span>{value.label || key}</span>
-            <strong>{value.count || 0}</strong>
-            <small>{key}</small>
-          </div>
-        ))}
-      </div>
-
-      <div className="search-row">
-        <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && search()} placeholder={t('搜索任务经验...', 'Search mission experience...')} />
-        <button onClick={search} disabled={loading}>{loading ? t('搜索中', 'Searching') : t('搜索', 'Search')}</button>
-      </div>
-
-      <div className="scroll-box tall">
-        {(results.length ? results : recent).map((item, index) => (
-          <div className="trace-row" key={index}>
-            <strong>{item.layer || t('记录', 'Record')}</strong>
-            <span>{item.text || JSON.stringify(item)}</span>
-          </div>
-        ))}
-        {!results.length && !recent.length && <p className="empty-copy">{t('暂无可显示的经验片段。', 'No experience fragments to display.')}</p>}
-      </div>
-    </div>
-  )
+  return <TrajectoryMemoryWorkspace language={language} apiBase={API_BASE} />
 }
 
 function CapabilityWorkspace({ language, selectedUav, skillCatalog }) {
@@ -2852,7 +2864,7 @@ export default function App() {
   const fpvImage = cameraImage(sensorCamera, sensorCameras, activeFpv?.sensor)
   const sceneImage = sensorScene?.image
   const sceneImageUrl = sceneMode
-    ? `${API_BASE}/api/sensor/relay/stream/scene`
+    ? `${API_BASE}/api/sensor/camera/stream?view=scene&fps=4`
     : ''
   const skillUav = selectedUav || uavs[0]
   const currentSkillRobot = skillUav?.robotId || systemStatus.current_robot || 'UAV_1'
@@ -3088,18 +3100,17 @@ ${areaContext}` : text
 
   const applyDesiredUavCount = async (count) => {
     const nextCount = Math.round(clamp(Number(count) || DEFAULT_UAV_COUNT, 1, MAX_UAV_COUNT))
-    const fleet = fleetRequestFromWorld(worldState, nextCount)
     setFleetSync({
       status: 'syncing',
       message: language === 'zh'
-        ? `正在从 10 架备用池中激活 ${nextCount} 架无人机并同步位置。`
-        : `Activating ${nextCount} UAVs from the 10-vehicle AirSim pool and synchronizing positions.`,
+        ? `正在激活 ${nextCount} 架无人机并同步当前编队。`
+        : `Activating ${nextCount} UAVs and synchronizing the active fleet.`,
     })
     try {
       const response = await fetch(`${API_BASE}/api/fleet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count: nextCount, fleet }),
+        body: JSON.stringify({ count: nextCount }),
       })
       const result = await response.json()
       if (!response.ok || !result.ok) {
@@ -3173,6 +3184,7 @@ ${areaContext}` : text
 
       <main className="mission-main">
         <MissionMap
+          mockTask={worldState?.mock_task}
           uavs={uavs}
           selectedUavId={selectedUavId}
           activeFpv={activeFpv}

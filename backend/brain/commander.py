@@ -7,6 +7,7 @@ import math
 import re
 
 from brain.uav_agent_context import normalize_robot_id
+from memory.roles import infer_role, normalize_role
 from brain.pursuit_mission import (
     build_pursuit_initialization,
     normalize_area_bounds,
@@ -181,6 +182,7 @@ def _normalize_mission(parsed: dict, task: str, robot_states: dict, task_area=No
             by_robot[robot_id] = {
                 "robot_id": robot_id,
                 "task": subtask,
+                "role": normalize_role(assignment.get("role"), default=infer_role(task=subtask)),
                 "coordination_peers": peers,
             }
 
@@ -197,6 +199,7 @@ def _normalize_mission(parsed: dict, task: str, robot_states: dict, task_area=No
                 "maintain safe separation, report observations, and coordinate before crossing another sector."
             ),
             "coordination_peers": [peer] if peer else [],
+            "role": infer_role(task=task),
         }
 
     initialization = {}

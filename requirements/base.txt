@@ -7,6 +7,7 @@ numpy>=1.24.0,<2.0  # keep PX4/symforce and OpenCV runtime compatible
 pyyaml>=6.0
 python-dotenv>=1.0.0
 requests>=2.28.0
+msgpack>=1.0.0,<2.0  # AirSim MsgPack-RPC transport
 
 # ── Web Server ───────────────────────────────────────────────
 flask>=3.0.0
