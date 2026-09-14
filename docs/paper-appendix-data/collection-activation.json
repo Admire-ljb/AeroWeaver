@@ -1,0 +1,13 @@
+{
+  "scope": "whole_mission",
+  "active": [
+    "collect_treasure",
+    "deliver_treasure",
+    "explore_local",
+    "follow_peer",
+    "hold_position",
+    "meet_collector",
+    "return_in_bounds",
+    "signal_target"
+  ]
+}

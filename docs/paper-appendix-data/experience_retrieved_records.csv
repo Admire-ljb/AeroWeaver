@@ -1,0 +1,12 @@
+﻿id,mission,step,agent,role,skill,return_observed_at_decision,finalized_at_decision
+ab99584d-58fc-4d9d-b686-a9b319285dd1,collection-aeroweaver_pilot-single_episode-66001,10,UAV_4,deposit_blue,hold_position,9.924723426998314,False
+df2f2aa7-676e-45f7-a729-9514e965bdc8,collection-aeroweaver_pilot-single_episode-66001,6,UAV_4,deposit_blue,hold_position,7.784071270188965,False
+fa09c155-ee72-4a4b-a9d1-e9840fac4b1f,collection-aeroweaver_pilot-single_episode-66001,1,UAV_4,deposit_blue,hold_position,14.45475489352453,False
+2bb3f8ff-1d43-406b-8677-e57a2b622795,collection-aeroweaver_pilot-single_episode-66001,2,UAV_4,deposit_blue,hold_position,15.29812960503578,False
+55673196-6ab6-4af2-8818-8fea358107f4,collection-aeroweaver_pilot-single_episode-66001,9,UAV_4,deposit_blue,return_in_bounds,9.350836583215033,False
+045370a5-4e8c-44fc-b857-98e7603b4275,collection-aeroweaver_pilot-single_episode-66001,3,UAV_4,deposit_blue,hold_position,16.18766601164467,False
+2543c8a6-719a-44c9-98ca-007236c0ae49,collection-aeroweaver_pilot-single_episode-66001,8,UAV_4,deposit_blue,hold_position,8.80241096443008,False
+16e3137a-19f2-418e-906a-7f43d4762f47,collection-aeroweaver_pilot-single_episode-66001,7,UAV_4,deposit_blue,hold_position,8.280562837656857,False
+be158bfe-b37d-4cb7-88aa-63889a54ddfa,collection-aeroweaver_pilot-single_episode-66001,5,UAV_4,deposit_blue,hold_position,7.311722212354315,False
+53a8b821-2ee2-44f7-b505-cbf8fb4c22b7,collection-aeroweaver_pilot-single_episode-66001,4,UAV_4,deposit_blue,hold_position,11.862882076991745,False
+341580cd-1ae2-4af3-9f3c-f7ca8f5eb5ba,collection-aeroweaver_pilot-single_episode-66001,0,UAV_4,deposit_blue,hold_position,13.654729753802641,False

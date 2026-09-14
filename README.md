@@ -16,6 +16,12 @@ The runtime supports AirSim, PX4/Gazebo, and a dependency-light mock adapter.
 The same registered skill layer is available in both operator-controlled and
 LLM-controlled workflows.
 
+## Paper Appendix
+
+[Read the paper appendix](docs/PAPER_APPENDIX.md) for implementation details,
+task definitions and reward functions, skill interfaces, runtime screenshots,
+experience-correction records, and complementary evaluation details.
+
 ## Highlights
 
 - Multi-UAV fleet synchronization, selection, status, position, and battery data

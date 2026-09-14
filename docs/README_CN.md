@@ -10,6 +10,10 @@ AeroWeaver 是一个面向多无人机协同控制的 Web 系统，集成无人�
 
 系统支持 AirSim、PX4/Gazebo 和 Mock 适配器，并提供中英文界面。
 
+## 论文附录
+
+[在线阅读论文附录（英文）](PAPER_APPENDIX.md)：包含实现细节、任务定义与奖励函数、技能接口、运行截图、经验修正记录及补充实验说明。
+
 ## Web 控制台
 
 ![包含三架 Mock 无人机的 AeroWeaver Web 控制台](docs/images/web-console.jpg)

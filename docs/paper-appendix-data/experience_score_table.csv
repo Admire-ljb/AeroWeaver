@@ -1,0 +1,4 @@
+﻿episode,step,agent,role,label,skill,parameters,retrieved_count,skill_mean_observed_return,retrieval_baseline,base_score,advantage,beta,corrected_score,selected_before,selected_after
+collection-aeroweaver_pilot-single_episode-66001,11,UAV_4,deposit_blue,A,return_in_bounds,{},1,9.350836583215033,11.17386269416754,-0.72399503,-1.8230261109525063,0.8,-2.182415918762005,True,False
+collection-aeroweaver_pilot-single_episode-66001,11,UAV_4,deposit_blue,B,explore_local,{},0,,11.17386269416754,-1.6827219,0.0,0.8,-1.6827219,False,False
+collection-aeroweaver_pilot-single_episode-66001,11,UAV_4,deposit_blue,C,hold_position,{},10,11.35616530526279,11.17386269416754,-1.1206491,0.1823026110952508,0.8,-0.9748070111237994,False,True
