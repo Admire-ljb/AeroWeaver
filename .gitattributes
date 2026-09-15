@@ -1,0 +1,14 @@
+# Keep shell scripts runnable on Windows checkouts (Git Bash / WSL / Linux / macOS).
+*.sh text eol=lf
+scripts/**/*.sh text eol=lf
+
+# PowerShell scripts should remain Windows-friendly.
+*.ps1 text eol=crlf
+
+# Keep container/config files stable across platforms.
+Dockerfile* text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sdf text eol=lf
+*.config text eol=lf
+*.py text eol=lf

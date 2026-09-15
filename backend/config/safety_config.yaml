@@ -1,0 +1,124 @@
+# AeroWeaver Safety Configuration
+# 安全配置文件 — 定义安全等级、命令过滤和物理限制
+#
+# 三档安全等级:
+#   strict     — 严格模式（新手/演示），大部分操作需确认
+#   standard   — 标准模式（日常使用），合理自动化
+#   permissive — 宽松模式（专家/测试），最大自由度
+#
+# 修改本文件后重启服务生效。
+
+safety_level: standard  # strict / standard / permissive
+
+# ══════════════════════════════════════════════════════════════
+#  命令过滤
+# ══════════════════════════════════════════════════════════════
+
+# 黑名单: 永远禁止的命令/操作（安全红线，不可通过配置绕过）
+# 这些命令在代码中硬编码校验，此处仅做文档说明
+blacklist:
+  - "rm -rf"
+  - "shutdown"
+  - "reboot"
+  - "disable_safety"
+  - "override_envelope"
+  - "format"
+  - "mkfs"
+  - "dd if="
+
+# 白名单: 允许自动执行的技能/命令（不需要人工确认）
+whitelist:
+  - "get_position"
+  - "get_battery"
+  - "hover"
+  - "observe"
+  - "detect_object"
+  - "get_sensor_data"
+  - "scan_area"
+  - "fuse_perception"
+  - "recognize_speech"
+  - "mark_location"
+  - "get_marks"
+  - "look_around"
+
+# 需要确认的操作（标准模式下需要人工确认，宽松模式自动通过）
+confirm_required:
+  - "takeoff"
+  - "land"
+  - "fly_to"
+  - "fly_relative"
+  - "change_altitude"
+  - "return_to_launch"
+  - "velocity_control"
+
+# ══════════════════════════════════════════════════════════════
+#  安全包线 (Flight Envelope)
+#  硬编码物理限制 — LLM 无法修改，用户无法关闭
+# ══════════════════════════════════════════════════════════════
+
+flight_envelope:
+  max_speed: 10.0          # m/s 最大速度
+  max_altitude: 120.0      # m   最大高度 (FAA/CAAC 限制)
+  min_altitude: 0.5        # m   最低高度 (防止撞地)
+  max_distance: 500.0      # m   最远距离 (从起飞点)
+  min_battery: 15.0        # %   最低电量 → 强制返航
+  critical_battery: 5.0    # %   极低电量 → 强制降落
+  heartbeat_timeout: 10    # s   心跳超时 → 自动悬停
+  max_tilt_angle: 35.0     # deg 最大倾斜角
+  geofence_enabled: true   # 电子围栏开关
+
+# ══════════════════════════════════════════════════════════════
+#  审批等级定义
+# ══════════════════════════════════════════════════════════════
+
+approval_levels:
+  # strict 模式: 几乎所有操作都要确认
+  strict:
+    auto: ["get_position", "get_battery", "observe", "get_sensor_data"]
+    confirm: ["hover", "takeoff", "land", "fly_to", "fly_relative",
+              "change_altitude", "return_to_launch", "look_around",
+              "scan_area", "mark_location", "velocity_control"]
+    deny: ["disable_safety", "override_envelope"]
+
+  # standard 模式: 感知类自动，控制类确认
+  standard:
+    auto: ["get_position", "get_battery", "hover", "observe",
+           "detect_object", "get_sensor_data", "scan_area",
+           "fuse_perception", "recognize_speech",
+           "mark_location", "get_marks", "look_around"]
+    confirm: ["takeoff", "land", "fly_to", "fly_relative",
+              "change_altitude", "return_to_launch", "velocity_control"]
+    deny: ["disable_safety", "override_envelope"]
+
+  # permissive 模式: 大部分自动，仅极危险操作禁止
+  permissive:
+    auto: ["get_position", "get_battery", "hover", "observe",
+           "detect_object", "get_sensor_data", "scan_area",
+           "fuse_perception", "recognize_speech",
+           "mark_location", "get_marks", "look_around",
+           "takeoff", "land", "fly_to", "fly_relative",
+           "change_altitude", "return_to_launch"]
+    confirm: ["velocity_control"]
+    deny: ["disable_safety", "override_envelope"]
+
+# ══════════════════════════════════════════════════════════════
+#  沙箱配置
+# ══════════════════════════════════════════════════════════════
+
+sandbox:
+  # 优先级: docker > process > restricted_python
+  preferred: auto          # auto / docker / process / restricted_python
+  docker_image: "python:3.12-slim"
+  execution_timeout: 10    # 秒
+  max_memory: "256m"       # Docker 内存限制
+  network_enabled: false   # 沙箱是否允许网络访问
+
+# ══════════════════════════════════════════════════════════════
+#  审计日志
+# ══════════════════════════════════════════════════════════════
+
+audit:
+  enabled: true
+  log_dir: "logs/audit"
+  max_entries: 10000       # 最大条目数（超出后轮转）
+  export_format: "json"    # json / csv

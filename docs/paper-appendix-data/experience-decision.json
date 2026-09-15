@@ -1,0 +1,177 @@
+{
+  "episode": "collection-aeroweaver_pilot-single_episode-66001",
+  "step": 11,
+  "agent": "UAV_4",
+  "decision": {
+    "choice": {
+      "skill": "hold_position",
+      "parameters": {}
+    },
+    "ranking": {
+      "base_scores": {
+        "A": -0.72399503,
+        "C": -1.1206491,
+        "B": -1.6827219
+      },
+      "advantages": {
+        "A": -1.8230261109525063,
+        "B": 0.0,
+        "C": 0.1823026110952508
+      },
+      "updated_observed_scores": {
+        "A": -2.182415918762005,
+        "C": -0.9748070111237994,
+        "B": -1.6827219
+      },
+      "missing_scores": [],
+      "unseen_score_upper_bound": -12.267227,
+      "certified": true,
+      "base_selected": "A",
+      "selected": "C",
+      "changed_by_memory": true,
+      "fallback": null,
+      "candidate_map": {
+        "A": {
+          "skill": "return_in_bounds",
+          "parameters": {}
+        },
+        "B": {
+          "skill": "explore_local",
+          "parameters": {}
+        },
+        "C": {
+          "skill": "hold_position",
+          "parameters": {}
+        }
+      },
+      "retrieval_count": 11,
+      "beta": 0.8,
+      "retrieved": [
+        {
+          "id": "ab99584d-58fc-4d9d-b686-a9b319285dd1",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 10,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 9.924723426998314,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "df2f2aa7-676e-45f7-a729-9514e965bdc8",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 6,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 7.784071270188965,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "fa09c155-ee72-4a4b-a9d1-e9840fac4b1f",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 1,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 14.45475489352453,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "2bb3f8ff-1d43-406b-8677-e57a2b622795",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 2,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 15.29812960503578,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "55673196-6ab6-4af2-8818-8fea358107f4",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 9,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "return_in_bounds",
+          "return_observed_at_decision": 9.350836583215033,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "045370a5-4e8c-44fc-b857-98e7603b4275",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 3,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 16.18766601164467,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "2543c8a6-719a-44c9-98ca-007236c0ae49",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 8,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 8.80241096443008,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "16e3137a-19f2-418e-906a-7f43d4762f47",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 7,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 8.280562837656857,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "be158bfe-b37d-4cb7-88aa-63889a54ddfa",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 5,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 7.311722212354315,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "53a8b821-2ee2-44f7-b505-cbf8fb4c22b7",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 4,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 11.862882076991745,
+          "finalized_at_decision": false
+        },
+        {
+          "id": "341580cd-1ae2-4af3-9f3c-f7ca8f5eb5ba",
+          "mission": "collection-aeroweaver_pilot-single_episode-66001",
+          "step": 0,
+          "agent": "UAV_4",
+          "role": "deposit_blue",
+          "skill": "hold_position",
+          "return_observed_at_decision": 13.654729753802641,
+          "finalized_at_decision": false
+        }
+      ]
+    },
+    "error": null,
+    "source": "provider_logprobs_and_memory",
+    "execution": {
+      "robot_id": "UAV_4",
+      "role": "deposit_blue",
+      "skill": "hold_position",
+      "velocity_ned": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "persistent": true,
+      "native_mpe": false
+    }
+  }
+}

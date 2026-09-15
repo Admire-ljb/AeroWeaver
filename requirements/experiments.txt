@@ -1,0 +1,4 @@
+# Optional dependencies for the skill-activation and MPE experiment scripts.
+-r mpe2.txt
+rank-bm25>=0.2.2
+tiktoken>=0.7.0

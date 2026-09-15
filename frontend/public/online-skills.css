@@ -1,0 +1,175 @@
+.online-skill-launch,
+.online-skill-primary,
+.online-skill-secondary,
+.online-skill-danger,
+.online-skill-icon {
+  border: 1px solid #2f6078;
+  color: #e9f8ff;
+  background: #0b2638;
+  min-height: 34px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.online-skill-launch,
+.online-skill-primary {
+  border-color: #00c8ef;
+  background: #087692;
+  font-weight: 700;
+}
+
+.online-skill-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  padding: 0;
+  border: 1px solid #31556f;
+  border-radius: 6px;
+  color: #dceefe;
+  background: #071b2c;
+  box-shadow: 0 20px 60px #000b;
+}
+
+.online-skill-dialog::backdrop {
+  background: #00101dcc;
+}
+
+.online-skill-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(160px, 1fr);
+  max-height: inherit;
+  overflow: hidden;
+}
+
+.online-skill-shell > header,
+.online-skill-library-head,
+.online-skill-row,
+.online-skill-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.online-skill-shell > header {
+  padding: 16px 18px;
+  border-bottom: 1px solid #24465e;
+  background: #0b263d;
+}
+
+.online-skill-shell > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.online-skill-shell > header strong {
+  font-size: 17px;
+}
+
+.online-skill-shell > header span,
+.online-skill-row span,
+.online-skill-row small {
+  color: #8faabd;
+}
+
+.online-skill-icon {
+  width: 36px;
+  padding: 0;
+  font-size: 24px;
+}
+
+.online-skill-create {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #24465e;
+}
+
+.online-skill-create label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.online-skill-create input,
+.online-skill-create textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #31556f;
+  border-radius: 4px;
+  color: #e9f8ff;
+  background: #061522;
+  padding: 10px 12px;
+  font: inherit;
+  resize: vertical;
+}
+
+.online-skill-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+#online-skill-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #8faabd;
+}
+
+#online-skill-status[data-state='success'] { color: #55e69a; }
+#online-skill-status[data-state='error'] { color: #ff7070; }
+
+.online-skill-library {
+  min-height: 0;
+  padding: 14px 18px 18px;
+  overflow: auto;
+}
+
+.online-skill-library-head {
+  position: sticky;
+  top: -14px;
+  z-index: 1;
+  padding: 10px 0;
+  background: #071b2c;
+}
+
+.online-skill-row {
+  padding: 12px 0;
+  border-top: 1px solid #193a50;
+  align-items: flex-start;
+}
+
+.online-skill-row > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.online-skill-row > div:last-child {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.online-skill-row span {
+  overflow-wrap: anywhere;
+}
+
+.online-skill-danger {
+  border-color: #8c3f49;
+  color: #ff9aa5;
+  background: #32151d;
+}
+
+.online-skill-empty {
+  margin: 18px 0;
+  color: #8faabd;
+}
+
+.online-skill-error { color: #ff7070; }
+
+@media (max-width: 620px) {
+  .online-skill-dialog { width: calc(100vw - 16px); }
+  .online-skill-row { align-items: stretch; flex-direction: column; }
+  .online-skill-row > div:last-child { justify-content: flex-end; }
+}
+

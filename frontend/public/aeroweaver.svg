@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="aeroWeaverGlow" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="0.52" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#061525"/>
+  <path d="M22 22 42 42M42 22 22 42" stroke="url(#aeroWeaverGlow)" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="16" cy="16" r="7" fill="#061525" stroke="#f8fbff" stroke-width="4"/>
+  <circle cx="48" cy="16" r="7" fill="#061525" stroke="#f8fbff" stroke-width="4"/>
+  <circle cx="16" cy="48" r="7" fill="#061525" stroke="#f8fbff" stroke-width="4"/>
+  <circle cx="48" cy="48" r="7" fill="#061525" stroke="#f8fbff" stroke-width="4"/>
+  <circle cx="32" cy="32" r="8" fill="url(#aeroWeaverGlow)"/>
+  <path d="M28 35h8l-2.8-8h-2.4L28 35Zm1.6 5 1.1-3h2.6l1.1 3h4.1l-5.2-16h-2.6l-5.2 16h4.1Z" fill="#ffffff"/>
+</svg>

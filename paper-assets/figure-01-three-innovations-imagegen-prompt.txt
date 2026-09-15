@@ -1,0 +1,24 @@
+Use case: precise-object-edit
+Asset type: first overview figure in a robotics research paper, 16:9 landscape.
+
+Edit target:
+figure-01-three-innovations.png
+
+Primary request:
+Polish the provided figure into a restrained publication-ready academic composite while preserving its exact three-column structure, logic, screenshot crops, wording, and information hierarchy.
+
+Preserve exactly:
+- Main title: "AeroSkill: Three Core Innovations"
+- The three numbered contributions and all mechanism semantics.
+- Left: Semantics + Typed Contract + Validator -> Governed Skill.
+- Center MCSA: Mission + State -> Eligibility Gate -> Eligible-Only Rank -> Validated Swarm, including approved, compatible, and state-ready.
+- Right EGSE: Candidate -> Review -> Approved -> Deprecated.
+- All three recognizable AeroWeaver project screenshot evidence regions.
+
+Changes allowed only:
+- refine spacing, alignment, border weights, typography consistency, screenshot framing, and subtle color balance;
+- improve separation between PROBLEM, CORE MECHANISM, PROJECT EVIDENCE, and What changes;
+- retain the navy, teal, amber, muted-red palette on a white background.
+
+Constraints:
+Exactly three panels. No additional modules, architecture network, equations, 3D, gradients, decorative blobs, watermark, or AeroSkillMesh text. Do not invent or alter screenshot UI content. Do not rewrite, misspell, omit, or duplicate text. Keep the figure simple and legible at paper width.

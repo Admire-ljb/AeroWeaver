@@ -1,0 +1,407 @@
+# AeroWeaver
+
+<p align="right">
+  <strong>English</strong> · <a href="docs/README_CN.md">中文</a>
+</p>
+
+[![Research foundation: TALKER](https://img.shields.io/badge/Research%20Foundation-TALKER-0A66C2)](https://doi.org/10.1109/LRA.2024.3511434)
+
+AeroWeaver is a Web-based multi-UAV coordination system for operating,
+observing, and orchestrating autonomous aerial vehicles. It combines live
+telemetry, sensor views, direct skill execution, collision-aware formation
+control, trajectory export, and optional LLM-driven mission planning in one
+bilingual console.
+
+The runtime supports AirSim, PX4/Gazebo, and a dependency-light mock adapter.
+The same registered skill layer is available in both operator-controlled and
+LLM-controlled workflows.
+
+## Paper Appendix
+
+[Read the paper appendix](docs/PAPER_APPENDIX.md) for implementation details,
+task definitions and reward functions, skill interfaces, runtime screenshots,
+experience-correction records, and complementary evaluation details.
+
+## Highlights
+
+- Multi-UAV fleet synchronization, selection, status, position, and battery data
+- Visible-light FPV, directional cameras, LiDAR, IMU, GPS, and distance sensors
+- Basic and advanced skill catalog with map-based position selection
+- Independent per-UAV execution with robot-level locking
+- Collision-aware rendezvous, formation hold, and rotating standby skills
+- Manual cockpit control and autonomous skill execution
+- Trajectory recording, visualization, JSON/CSV export, and replay-ready data
+- Chinese and English interface
+- Remote AirSim camera relay support
+
+## Web Console
+
+![AeroWeaver Web console with three mock UAVs](docs/images/web-console.jpg)
+
+The console combines the live fleet map, per-UAV selection, sensor and cockpit
+entry points, skill visualization, trajectory tools, execution logs, and
+mission input. The language switch in the header changes both UI controls and
+runtime messages.
+
+## Operating Modes
+
+### Manual Mode
+
+Manual mode does not require an LLM or an API key. The operator selects a UAV
+from the map or fleet list, opens its payload or skill panel, enters parameters,
+and executes the skill directly.
+
+Use manual mode for:
+
+- cockpit control and direct flight commands;
+- validating sensors and vehicle mappings;
+- testing one skill at a time;
+- assigning different skills to different UAVs concurrently;
+- executing multi-UAV rendezvous and formation skills with explicit parameters.
+
+The backend only accepts direct skill execution while the system is in manual
+mode. Each command is checked against the selected robot and the registered
+skill schema before execution.
+
+### LLM Mode
+
+LLM mode accepts a natural-language mission from the mission input panel. The
+configured model interprets the request, selects registered skills, generates a
+plan, and dispatches actions through the same execution layer used by manual
+mode.
+
+Use LLM mode for:
+
+- natural-language mission decomposition;
+- multi-step reconnaissance and inspection tasks;
+- skill selection and parameter generation;
+- plan reflection and mission progress reporting;
+- coordinated task assignment across multiple UAVs.
+
+The model does not bypass the runtime. Robot reservations, skill registration,
+parameter validation, adapter checks, interrupt handling, and flight safety
+guards still apply. An OpenAI-compatible endpoint or a local Ollama endpoint can
+be configured from `.env` or from the Web console.
+
+## Architecture
+
+```text
+Web console (React + Socket.IO)
+        |
+Flask coordination server
+        |
+Manual dispatcher or LLM planner
+        |
+Registered basic, advanced, and swarm skills
+        |
+Per-UAV execution channels and safety guards
+        |
+Mock | AirSim | PX4/Gazebo adapters
+```
+
+## Role-Centric Experience and MPE2 Scenarios
+
+Experience records are keyed by a semantic `role` such as `searcher`, `tracker`,
+or `pursuer`; `agent_id` is retained only as an execution-instance and audit field.
+This lets interchangeable UAV instances share outcomes without treating `UAV_1`
+and `UAV_6` as different capabilities. The API exposes the catalog at
+`GET /api/environments/mpe` and can probe one local environment with
+`POST /api/environments/mpe/<scenario_id>/probe`.
+
+The optional `requirements/mpe2.txt` adapter registers the official Farama MPE2
+suite. It is the reproducible boundary for the MPE family; arbitrary research
+forks derived from MPE do not share one guaranteed package or entry-point API.
+
+| Scenario | Family | Semantic roles |
+| --- | --- | --- |
+| `simple` | debug | agent |
+| `simple_adversary` | deception | good_agent, adversary |
+| `simple_crypto` | communication | sender, receiver, eavesdropper |
+| `simple_formation` | formation | formation_member |
+| `simple_line` | formation | formation_member |
+| `simple_push` | interaction | pusher, adversary |
+| `simple_reference` | communication | speaker, listener |
+| `simple_speaker_listener` | communication | speaker, listener |
+| `simple_spread` | coverage | searcher |
+| `simple_tag` | pursuit | pursuer, evader |
+| `simple_world_comm` | partial observation | leader_adversary, adversary, good_agent |
+| `collect_treasure` | transport | collector, depositor |
+
+Install the adapter only when these environments are needed:
+
+```powershell
+pip install -r requirements/mpe2.txt
+```
+
+## Quick Start With Mock Vehicles
+
+Requirements:
+
+- Python 3.10 or newer
+- Node.js 20 or newer
+- npm 10 or newer
+
+```bash
+# Download and extract the source archive from the anonymous repository.
+cd AeroWeaver
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements/mock.txt
+
+cd frontend
+npm ci
+npm run build
+cd ..
+
+SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python backend/server.py
+```
+
+On Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements/mock.txt
+
+Set-Location frontend
+npm ci
+npm run build
+Set-Location ..
+
+$env:SIM_ADAPTER = "mock"
+$env:AEROWEAVER_UAV_COUNT = "3"
+python backend/server.py
+```
+
+Open [http://127.0.0.1:5001](http://127.0.0.1:5001).
+
+Mock vehicles use a three-axis point-mass model inspired by MPE: physical damping, bounded acceleration, speed limiting, and fixed-step position integration. Flight skills therefore produce continuous trajectories instead of teleporting. Set `AEROWEAVER_MOCK_REALTIME_FACTOR` to control simulated time relative to wall-clock time (default: `2.0`).
+
+## AirSim
+
+The default server path is the dependency-light MPE-style mock runtime. To
+connect an optional UE4/AirSim backend, start AirSim on an address reachable by
+the AeroWeaver backend, open the map `Settings` panel, enter the UE4 IP and RPC
+port (normally `41451`), and click `Connect AirSim`. A failed connection keeps
+the mock runtime active. The vehicle names should follow `Drone_1`, `Drone_2`,
+and so on; the fleet manager exposes only the active subset in the Web console.
+
+For headless startup, the same backend can still be selected through `.env`:
+
+```dotenv
+SIM_ADAPTER=airsim
+AIRSIM_HOST=127.0.0.1
+AIRSIM_PORT=41451
+AEROWEAVER_UAV_COUNT=3
+
+# Optional browser camera relay running near AirSim
+AIRSIM_CAMERA_RELAY_ENABLED=true
+AIRSIM_CAMERA_RELAY_URL=http://127.0.0.1:8765
+```
+
+Then build the UI and start the server:
+
+```bash
+cd frontend && npm ci && npm run build && cd ..
+python backend/server.py
+```
+
+For a remote AirSim instance, set `AIRSIM_HOST` to its reachable address. Keep
+the RPC port and camera relay behind a trusted network or tunnel; they are not
+designed as public Internet services.
+
+## Enabling LLM Mode
+
+Provide an OpenAI-compatible endpoint through environment variables or the
+model settings panel:
+
+```dotenv
+ACTIVE_PROVIDER=openai
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_API_KEY=replace-with-your-key
+LLM_MODEL=gpt-4o
+
+VLM_BASE_URL=https://api.openai.com/v1
+VLM_API_KEY=replace-with-your-key
+VLM_MODEL=gpt-4o
+```
+
+Local Ollama is also supported:
+
+```dotenv
+ACTIVE_PROVIDER=ollama_local
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+OLLAMA_MODEL=qwen2.5:7b
+```
+
+After startup:
+
+1. Open the Web console.
+2. Confirm the adapter and fleet are online.
+3. Configure or select the model in the model settings panel.
+4. Switch from **Manual** to **LLM** mode.
+5. Enter a mission in the mission input panel.
+6. Monitor planning, robot reservations, skill execution, and results in the
+   execution log.
+
+API keys and runtime model settings are local files and are ignored by Git.
+
+## Swarm Skills
+
+| Skill | Purpose |
+| --- | --- |
+| `swarm_rendezvous` | Gather selected UAVs around a map-selected center |
+| `swarm_formation_hold` | Form a triangle, circle, line, or V and hold |
+| `swarm_orbit_hold` | Rotate a formation around a center while monitoring separation |
+
+The swarm coordinator uses altitude-layered approach paths, independent AirSim
+control channels, minimum-separation monitoring, terrain-aware altitude
+leveling, and final slot verification.
+
+## Real Examples
+
+The following screenshot is from an AirSim-connected three-UAV formation test.
+It shows synchronized vehicle positions and a live FPV sensor window during
+swarm execution.
+
+![AirSim-connected multi-UAV formation test](docs/images/airsim-multi-uav.webp)
+
+### 1. Map-Selected Flight
+
+1. Switch to **Manual** mode and select `UAV-1`.
+2. Open **Visualize Skill**, select `fly_to`, and click **Pick on Map**.
+3. Choose a point and execute with `speed=15`.
+4. AeroWeaver sends the command only to `UAV_1`, preserves a terrain-safe
+   altitude, and updates its map position and FPV view from telemetry.
+
+Equivalent skill input:
+
+```json
+{
+  "target_position": [41, 62, -8],
+  "speed": 15
+}
+```
+
+### 2. Collision-Aware Three-UAV Orbit
+
+Select the three active UAVs and execute `swarm_rendezvous` with:
+
+```json
+{
+  "robot_ids": "UAV_1,UAV_2,UAV_3",
+  "center_position": [41, 62, -8],
+  "formation": "triangle",
+  "spacing": 8,
+  "speed": 15,
+  "post_action": "orbit",
+  "duration": 20,
+  "angular_speed": 8
+}
+```
+
+The coordinator assigns separate slots and altitude-layered approach paths,
+moves the UAVs concurrently, monitors minimum separation, and rotates the
+completed formation around the selected center.
+
+### 3. Natural-Language Mission
+
+After configuring an LLM, switch to **LLM** mode and submit:
+
+> Send UAV-1, UAV-2, and UAV-3 to rendezvous around the selected clearing,
+> form an 8-meter triangle, then orbit for 20 seconds while maintaining safe
+> separation.
+
+The planner maps the request to registered swarm skills. The same parameter
+validation, per-UAV execution channels, adapter checks, and safety guards used
+by Manual mode remain active.
+
+## Development
+
+Backend tests:
+
+```bash
+pip install -r requirements/mock.txt -r requirements/experiments.txt pytest
+python -m pytest
+```
+
+Focused multi-UAV regression suite:
+
+```bash
+python -m unittest \
+  tests.test_swarm_skills \
+  tests.test_multi_uav_adapter_context \
+  tests.test_basic_skills
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run build
+```
+
+## Repository Layout
+
+```text
+backend/        Python service, adapters, agents, skills, and simulation assets
+frontend/       React operations console
+deploy/         Dockerfiles and Compose definitions
+docs/           Documentation, screenshots, and the Chinese README source
+requirements/   Python dependency groups
+scripts/        Startup, diagnostics, and repository maintenance
+tests/          Backend, adapter, protocol, and safety tests
+```
+
+## Research Foundation
+
+AeroWeaver continues the research direction established by **TALKER**:
+task-activated LLM reasoning for UAV missions, reusable action primitives and
+skills, and knowledge extension through interaction. AeroWeaver develops this
+line further as an independently maintained multi-UAV operations system with
+manual and LLM modes, simulator adapters, per-UAV execution channels, swarm
+skills, and a bilingual Web console.
+
+> J. Lou, R. Shi, Y. Lin, Q. Wang, and W. Wu, "TALKER: A Task-Activated
+> Language Model Based Knowledge-Extension Reasoning System," *IEEE Robotics
+> and Automation Letters*, vol. 10, no. 2, pp. 1026-1033, 2025.
+> [doi:10.1109/LRA.2024.3511434](https://doi.org/10.1109/LRA.2024.3511434)
+
+```bibtex
+@article{lou2025talker,
+  author  = {Lou, Jiabin and Shi, Rongye and Lin, Yuxin and Wang, Qunbo and Wu, Wenjun},
+  title   = {TALKER: A Task-Activated Language Model Based Knowledge-Extension Reasoning System},
+  journal = {IEEE Robotics and Automation Letters},
+  year    = {2025},
+  volume  = {10},
+  number  = {2},
+  pages   = {1026--1033},
+  doi     = {10.1109/LRA.2024.3511434}
+}
+```
+
+## Safety
+
+This is a research system. Validate all commands in simulation before using any
+physical aircraft. Configure geofencing, altitude limits, emergency stop
+behavior, and operator supervision independently of the LLM.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+### Shared Swarm Experience
+
+AeroWeaver maintains a shared, persistent experience memory for multi-UAV
+decision making:
+
+- typed skill candidates are ranked from provider log-probabilities and
+  retrieved advantages;
+- successful and failed executions contribute trajectory-shaped rewards;
+- agent results, termination votes, and round evidence update mission returns;
+- the runtime only dispatches registered skills and never executes model code.
+
+The memory is stored as JSONL under `backend/data/swarm_experience/` by default

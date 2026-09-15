@@ -1,0 +1,20 @@
+[
+  {"id":"coverage-01","scenario_id":"coverage","mission":"Use three UAVs to occupy all landmarks and avoid redundant coverage.","roles":["searcher"]},
+  {"id":"coverage-02","scenario_id":"coverage","mission":"Deploy six aircraft across the marked sites so that no site is left unattended; keep them separated.","roles":["searcher"]},
+  {"id":"pursuit-01","scenario_id":"pursuit","mission":"UAV1-6 pursue UAV7-8. The pursuers cooperate to capture the evaders, who try to escape.","roles":["pursuer","evader"]},
+  {"id":"pursuit-02","scenario_id":"pursuit","mission":"Four aircraft close on two fleeing opponents; the opposing pair tries to stay away from the interceptors.","roles":["pursuer","evader"]},
+  {"id":"navigation-01","scenario_id":"navigation","mission":"A stationary speaker knows the goal and must guide a moving listener to that landmark.","roles":["speaker","listener"]},
+  {"id":"navigation-02","scenario_id":"navigation","mission":"Only the immobile guide is told the destination. It must communicate that information so two mobile followers can arrive there.","roles":["speaker","listener"]},
+  {"id":"private-01","scenario_id":"private_communication","mission":"A sender and receiver share a key. Transmit and recover the private symbol while an eavesdropper tries to infer it without the key.","roles":["sender","receiver","eavesdropper"]},
+  {"id":"private-02","scenario_id":"private_communication","mission":"Protect a confidential two-bit value in transit. Its intended recipient can use shared secret information; a third participant overhears the transmission and attempts reconstruction.","roles":["sender","receiver","eavesdropper"]},
+  {"id":"circle-01","scenario_id":"circle","mission":"Arrange five formation members in assigned positions around a circular landmark.","roles":["formation_member"]},
+  {"id":"circle-02","scenario_id":"circle","mission":"Place eight aircraft at their designated evenly spaced sites on a ring and maintain separation.","roles":["formation_member"]},
+  {"id":"line-01","scenario_id":"line","mission":"Five formation members must occupy evenly spaced slots on the line between two endpoints.","roles":["formation_member"]},
+  {"id":"line-02","scenario_id":"line","mission":"Organize six aircraft into a straight row between the two markers, each moving to its own assigned site.","roles":["formation_member"]},
+  {"id":"world-01","scenario_id":"world_communication","mission":"A mobile leader and pursuers chase foragers. The leader shares sightings; foragers visit food and use cover or evasive motion to avoid capture.","roles":["leader","pursuer","forager"]},
+  {"id":"world-02","scenario_id":"world_communication","mission":"The better-informed mobile participant directs teammates toward fleeing resource seekers. Seekers need food and must protect themselves by hiding in forest or moving away from threats.","roles":["leader","pursuer","forager"]},
+  {"id":"collection-01","scenario_id":"collection","mission":"Collectors pick up treasures and deliver them to mobile red or blue deposits that move to meet carriers of matching cargo.","roles":["collector","deposit_red","deposit_blue"]},
+  {"id":"collection-02","scenario_id":"collection","mission":"Gather parcels one at a time and carry each to the recipient of the same color. Both receiving units should approach compatible loaded carriers.","roles":["collector","deposit_red","deposit_blue"]},
+  {"id":"concealment-01","scenario_id":"concealment","mission":"Informed agents approach a secret goal while an adversary tries to identify and reach it. Decoy landmarks are available.","roles":["informed","adversary"]},
+  {"id":"concealment-02","scenario_id":"concealment","mission":"Some participants know the confidential destination and need to get there without revealing it; an uninformed opponent observes them and tries to locate the same destination.","roles":["informed","adversary"]}
+]

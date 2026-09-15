@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>AeroWeaver — 设备接入</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; background: #0a0e1a; color: #e2e8f0; min-height: 100vh; display: flex; flex-direction: column; }
+.header { padding: 16px; text-align: center; border-bottom: 1px solid #1e293b; }
+.header h1 { font-size: 20px; font-weight: 700; }
+.header p { font-size: 12px; color: #64748b; margin-top: 4px; }
+.status-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: #111827; font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot.green { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+.dot.red { background: #ef4444; }
+.dot.yellow { background: #f59e0b; }
+.chat-area { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.msg { max-width: 85%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.5; word-wrap: break-word; white-space: pre-wrap; }
+.msg.ai { align-self: flex-start; background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.3); border-bottom-left-radius: 4px; }
+.msg.user { align-self: flex-end; background: rgba(34,197,94,0.15); border: 1px solid rgba(34,197,94,0.3); border-bottom-right-radius: 4px; }
+.msg.system { align-self: center; background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); font-size: 12px; color: #fbbf24; text-align: center; max-width: 95%; }
+.msg .label { font-size: 11px; color: #64748b; margin-bottom: 3px; }
+.skills-section { padding: 12px 16px; border-top: 1px solid #1e293b; }
+.skill-row { margin-bottom: 6px; }
+.skill-title { font-size: 11px; color: #94a3b8; }
+.pill { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; margin: 2px; }
+.pill.motor { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+.pill.perception { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+.pill.cognitive { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+.pill.soft { background: rgba(236,72,153,0.15); color: #f472b6; border: 1px solid rgba(236,72,153,0.3); }
+.input-area { padding: 12px 16px; border-top: 1px solid #1e293b; display: flex; gap: 8px; }
+.input-area input { flex: 1; padding: 10px 14px; background: #111827; border: 1px solid #374151; border-radius: 20px; color: #e2e8f0; font-size: 14px; outline: none; }
+.input-area input:focus { border-color: #3b82f6; }
+.input-area button { padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 20px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.input-area button:disabled { opacity: 0.5; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>AeroWeaver 设备接入</h1>
+  <p>通过对话将你的设备接入主控系统</p>
+</div>
+<div class="status-bar">
+  <div class="dot" id="dot"></div>
+  <span id="statusText">未连接</span>
+  <span style="margin-left:auto;font-size:11px;color:#475569" id="didText"></span>
+</div>
+<div class="chat-area" id="chat"></div>
+<div class="skills-section" id="skills" style="display:none"></div>
+<div class="input-area">
+  <input id="inp" placeholder="描述你的设备..." />
+  <button id="btn" onclick="send()">发送</button>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const SERVER = new URLSearchParams(location.search).get('server')
+  || ('http://' + (location.hostname==='localhost'?'127.0.0.1':location.hostname) + ':5001');
+const DID = new URLSearchParams(location.search).get('id') || 'device_' + Math.random().toString(36).substr(2,6);
+let socket, token, hbTimer;
+
+document.getElementById('didText').textContent = DID;
+document.getElementById('inp').addEventListener('keydown', e => { if(e.key==='Enter') send(); });
+
+function addMsg(text, type) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + type;
+  if (type==='ai') d.innerHTML = '<div class="label">主控 AI</div>' + text.replace(/\n/g,'<br>');
+  else if (type==='user') d.innerHTML = '<div class="label">操作员</div>' + text;
+  else d.textContent = text;
+  document.getElementById('chat').appendChild(d);
+  document.getElementById('chat').scrollTop = 999999;
+}
+
+function setStatus(s, t) {
+  document.getElementById('dot').className = 'dot ' + s;
+  document.getElementById('statusText').textContent = t;
+}
+
+async function init() {
+  setStatus('yellow', '连接中...');
+  addMsg('正在连接主控系统...', 'system');
+  try {
+    const r = await fetch(SERVER + '/api/device/register', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ device_id:DID, device_type:'UNKNOWN', capabilities:[], sensors:[], protocol:'websocket', metadata:{onboarding:true} })
+    });
+    token = (await r.json()).token || '';
+  } catch(e) { addMsg('连接失败: '+e.message,'system'); setStatus('red','连接失败'); return; }
+
+  socket = io(SERVER, {transports:['polling','websocket']});
+  socket.on('connect', () => {
+    socket.emit('device_connect', {device_id:DID, token});
+    setStatus('green', '已连接');
+    addMsg('已连接到主控系统', 'system');
+    addMsg('你好，我是 AeroWeaver 主控 AI。\n\n请描述你要接入的设备：\n• 设备类型（无人机/机器人/传感器/手机/其他）\n• 型号（如果知道）\n• 有哪些传感器和能力\n\n我会帮你完成接入，有不确定的信息我可以帮你查。');
+    hbTimer = setInterval(() => socket.emit('heartbeat',{device_id:DID}), 5000);
+  });
+  socket.on('device_action', data => {
+    addMsg('🔧 验证指令: ' + data.action + ' ' + JSON.stringify(data.params||{}), 'system');
+    socket.emit('action_result', { action_id:data.action_id, device_id:DID, success:true, message:'验证通过', output:{} });
+    addMsg('✅ ' + data.action + ' 验证通过', 'system');
+  });
+  socket.on('disconnect', () => setStatus('red','断开'));
+}
+
+async function send() {
+  const inp = document.getElementById('inp');
+  const text = inp.value.trim();
+  if (!text) return;
+  inp.value = '';
+  addMsg(text, 'user');
+  document.getElementById('btn').disabled = true;
+
+  try {
+    const r = await fetch(SERVER + '/api/device/' + DID + '/onboard', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({message: text})
+    });
+    const data = await r.json();
+    if (data.reply) addMsg(data.reply, 'ai');
+    if (data.profile_ready) {
+      addMsg('📋 设备档案已创建！正在匹配技能...', 'system');
+      await showSkills();
+      addMsg('✅ 设备已就绪，主控控制台可以看到并操控你的设备了。', 'system');
+      setStatus('green', '已就绪 — ' + DID);
+    }
+  } catch(e) { addMsg('错误: '+e.message, 'system'); }
+  document.getElementById('btn').disabled = false;
+}
+
+async function showSkills() {
+  try {
+    const r = await fetch(SERVER + '/api/device/' + DID + '/skills');
+    const d = await r.json();
+    const sec = document.getElementById('skills');
+    sec.style.display = '';
+    sec.innerHTML = '';
+    const layers = [
+      ['Motor Skills', d.motor||[], 'motor'],
+      ['Perception Skills', d.perception||[], 'perception'],
+      ['Cognitive Skills', d.cognitive||[], 'cognitive'],
+      ['Soft Skills', d.soft||[], 'soft'],
+    ];
+    layers.forEach(([title, skills, cls]) => {
+      if (!skills.length) return;
+      const row = document.createElement('div');
+      row.className = 'skill-row';
+      row.innerHTML = '<span class="skill-title">' + title + ': </span>' +
+        skills.map(s => '<span class="pill '+cls+'">'+s+'</span>').join('');
+      sec.appendChild(row);
+    });
+  } catch(e) {}
+}
+
+// 页面加载自动连接
+init();
+</script>
+</body>
+</html>
