@@ -11,7 +11,7 @@ It connects LLM agents to registered skills, gives each UAV its own decision
 context and execution channel, and reuses role-specific experience to adapt skill
 selection without retraining the model.
 
-![AeroWeaver console connected to AirSim with six UAVs](docs/images/paper-appendix/aeroweaver_operator_console_airsim.png)
+![AeroWeaver autonomous swarm execution with live inter-UAV communication](docs/images/aeroweaver-swarm-console.png)
 
 ## Core Capabilities
 

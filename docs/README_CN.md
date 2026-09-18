@@ -9,7 +9,7 @@
 AeroWeaver 将自然语言任务转化为多无人机协同行动：通过已注册技能执行模型决策，
 让每架无人机拥有独立的决策上下文与执行通道，并复用相同任务和角色的执行经验来改进技能选择，无需重新训练模型。
 
-![AeroWeaver 接入 AirSim 的六机控制台](images/paper-appendix/aeroweaver_operator_console_airsim.png)
+![AeroWeaver 多无人机自主协同与实时通信控制台](images/aeroweaver-swarm-console.png)
 
 ## 核心能力
 
