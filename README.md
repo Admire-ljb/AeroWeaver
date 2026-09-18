@@ -4,7 +4,7 @@
   <strong>English</strong> · <a href="https://github.com/Admire-ljb/AeroWeaver/tree/zh">中文</a>
 </p>
 
-[![Research foundation: TALKER](https://img.shields.io/badge/Research%20Foundation-TALKER-0A66C2)](https://doi.org/10.1109/LRA.2024.3511434)
+[![arXiv](https://img.shields.io/badge/arXiv-2609.18520-b31b1b.svg)](https://arxiv.org/abs/2609.18520)
 
 AeroWeaver is a Web-based multi-UAV coordination system for operating,
 observing, and orchestrating autonomous aerial vehicles. It combines live
@@ -356,30 +356,23 @@ scripts/        Startup, diagnostics, and repository maintenance
 tests/          Backend, adapter, protocol, and safety tests
 ```
 
-## Research Foundation
+## Citation
 
-AeroWeaver continues the research direction established by **TALKER**:
-task-activated LLM reasoning for UAV missions, reusable action primitives and
-skills, and knowledge extension through interaction. AeroWeaver develops this
-line further as an independently maintained multi-UAV operations system with
-manual and LLM modes, simulator adapters, per-UAV execution channels, swarm
-skills, and a bilingual Web console.
+If you use AeroWeaver in your research, please cite our paper:
 
-> J. Lou, R. Shi, Y. Lin, Q. Wang, and W. Wu, "TALKER: A Task-Activated
-> Language Model Based Knowledge-Extension Reasoning System," *IEEE Robotics
-> and Automation Letters*, vol. 10, no. 2, pp. 1026-1033, 2025.
-> [doi:10.1109/LRA.2024.3511434](https://doi.org/10.1109/LRA.2024.3511434)
+> Jiabin Lou et al., "AeroWeaver: An Embodied-Agent Harness for Weaving Aerial
+> Skills into Distributed, Adaptive Swarm Execution," arXiv, 2026.
+> [arXiv:2609.18520](https://arxiv.org/abs/2609.18520)
 
 ```bibtex
-@article{lou2025talker,
-  author  = {Lou, Jiabin and Shi, Rongye and Lin, Yuxin and Wang, Qunbo and Wu, Wenjun},
-  title   = {TALKER: A Task-Activated Language Model Based Knowledge-Extension Reasoning System},
-  journal = {IEEE Robotics and Automation Letters},
-  year    = {2025},
-  volume  = {10},
-  number  = {2},
-  pages   = {1026--1033},
-  doi     = {10.1109/LRA.2024.3511434}
+@misc{lou2026aeroweaver,
+  title         = {{AeroWeaver}: An Embodied-Agent Harness for Weaving Aerial Skills into Distributed, Adaptive Swarm Execution},
+  author        = {Jiabin Lou and Yirong Yang and Haopeng Wang and Xuxin Lv and Xinyu Liu and Diyuan Hou and Xuehong Liu and Rongye Shi and Wenjun Wu},
+  year          = {2026},
+  eprint        = {2609.18520},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.AI},
+  url           = {https://arxiv.org/abs/2609.18520}
 }
 ```
 

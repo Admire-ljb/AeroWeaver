@@ -157,10 +157,15 @@ def test_mock_pursuit_has_continuous_motion_and_reaches_capture_before_timeout()
     spec.update({"decision_interval_s": 1.0, "max_rounds": 20, "max_world_steps": 80})
     initialization = build_pursuit_initialization(spec, rng=random.Random(11))
     initial_positions = {item["robot_id"]: item["position"] for item in initialization}
-    adapter = MockAdapter(realtime_factor=20.0)
+    adapter = MockAdapter()
+    dt = adapter._dynamics.dt
+    steps_per_round = round(spec["decision_interval_s"] / dt)
+    assert math.isclose(steps_per_round * dt, spec["decision_interval_s"])
     trajectories = {robot_id: [] for robot_id in spec["participants"]}
     try:
-        adapter.connect()
+        # Advance the real integrator explicitly so CI scheduling cannot change
+        # the simulated duration or interleave physics with fleet commands.
+        adapter._connected = True
         adapter.seed_fleet({
             robot_id: {"position": position, "battery": 100, "in_air": True}
             for robot_id, position in initial_positions.items()
@@ -175,18 +180,29 @@ def test_mock_pursuit_has_continuous_motion_and_reaches_capture_before_timeout()
                 decision = parse_motion_decision("", observation, spec)
                 direction = decision["direction"]
                 speed = decision["speed_mps"]
-                adapter.set_velocity_ned_for(
+                result = adapter.set_velocity_ned_for(
                     robot_id,
                     direction[0] * speed,
                     direction[1] * speed,
                     0.0,
                 )
+                assert result.success
 
-            time.sleep(spec["decision_interval_s"] / adapter.realtime_factor)
+            for _ in range(steps_per_round):
+                before = adapter.get_robot_snapshot()
+                with adapter._state_lock:
+                    adapter._step_world_locked()
+                after = adapter.get_robot_snapshot()
+                for robot_id in spec["participants"]:
+                    position = after[robot_id]["position"]
+                    distance = math.dist(before[robot_id]["position"], position)
+                    speed_limit = math.dist(before[robot_id]["command_velocity"], [0, 0, 0])
+                    # Check continuity against each UAV's own commanded speed;
+                    # pursuers and the evader intentionally have different speeds.
+                    assert distance <= speed_limit * dt + 1e-9
+                    trajectories[robot_id].append(tuple(position))
             fleet = adapter.get_robot_snapshot()
             positions = {robot_id: fleet[robot_id]["position"] for robot_id in spec["participants"]}
-            for robot_id in spec["participants"]:
-                trajectories[robot_id].append(tuple(positions[robot_id]))
             outcome = evaluate_pursuit(
                 positions,
                 spec,
@@ -200,11 +216,6 @@ def test_mock_pursuit_has_continuous_motion_and_reaches_capture_before_timeout()
         assert captured
         assert all(math.dist(initial_positions[robot_id], path[-1]) > 2 for robot_id, path in trajectories.items())
         assert all(len(set(path)) > 2 for path in trajectories.values())
-        traveled = []
-        for robot_id, path in trajectories.items():
-            samples = [tuple(initial_positions[robot_id]), *path]
-            traveled.append(sum(math.dist(first, second) for first, second in zip(samples, samples[1:])))
-        assert min(traveled) / max(traveled) >= 0.75
     finally:
         for robot_id in spec["participants"]:
             adapter.stop_velocity_for(robot_id)
