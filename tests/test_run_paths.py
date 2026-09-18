@@ -1,4 +1,6 @@
 from pathlib import Path
+import re
+from urllib.parse import urlsplit
 
 
 def test_repository_uses_role_based_top_level_layout():
@@ -28,35 +30,64 @@ def test_repository_uses_role_based_top_level_layout():
 
 
 def test_readme_documents_all_runnable_user_paths():
-    readme = Path("README.md").read_text(encoding="utf-8")
-    for expected in [
-        "SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python backend/server.py",
-        "python -m pytest",
-        "npm ci",
-        "npm run build",
-        "AIRSIM_HOST=127.0.0.1",
-    ]:
-        assert expected in readme
-    assert (
-        ("Manual Mode" in readme and "LLM Mode" in readme)
-        or ("手动模式" in readme and "LLM 模式" in readme)
-    )
+    for path in [Path("README.md"), Path("docs/README_CN.md")]:
+        readme = path.read_text(encoding="utf-8")
+        for expected in [
+            "python -m venv .venv",
+            "pip install -r requirements/mock.txt",
+            "npm --prefix frontend ci",
+            "npm --prefix frontend run build",
+            "python backend/server.py",
+            "http://127.0.0.1:5001",
+        ]:
+            assert expected in readme
+        assert re.search(r"\]\([^)]*USAGE(?:_CN)?\.md\)", readme)
+
+    # Detailed commands live in the linked guides, not on the project landing page.
+    guides = list(Path("docs").glob("USAGE*.md"))
+    if guides:
+        assert {path.name for path in guides} >= {"USAGE.md", "USAGE_CN.md"}
+        for path in guides:
+            guide = path.read_text(encoding="utf-8")
+            for expected in [
+                "SIM_ADAPTER=mock AEROWEAVER_UAV_COUNT=3 python backend/server.py",
+                "python -m pytest",
+                "npm ci",
+                "npm run build",
+                "AIRSIM_HOST=127.0.0.1",
+            ]:
+                assert expected in guide
+    else:
+        # The legacy zh branch directs readers to the maintained main-branch guide.
+        for path in [Path("README.md"), Path("docs/README_CN.md")]:
+            assert (
+                "https://github.com/Admire-ljb/AeroWeaver/blob/main/docs/USAGE_CN.md"
+                in path.read_text(encoding="utf-8")
+            )
 
 
 def test_readme_language_routes_and_web_console_assets_exist():
     readme = Path("README.md").read_text(encoding="utf-8")
     chinese = Path("docs/README_CN.md").read_text(encoding="utf-8")
 
-    if "Manual Mode" in readme:
-        assert "github.com/Admire-ljb/AeroWeaver/tree/zh" in readme
+    english_link = "[English](https://github.com/Admire-ljb/AeroWeaver/blob/main/README.md)"
+    if "[中文]" in readme:
+        assert "[中文](docs/README_CN.md)" in readme
     else:
-        assert "github.com/Admire-ljb/AeroWeaver/tree/main" in readme
+        assert english_link in readme
 
-    assert "github.com/Admire-ljb/AeroWeaver/tree/main" in chinese
-    assert Path("docs/images/web-console.jpg").is_file()
-    assert Path("docs/images/airsim-multi-uav.webp").is_file()
-    assert "docs/images/web-console.jpg" in readme
-    assert "docs/images/airsim-multi-uav.webp" in readme
+    assert "[English](../README.md)" in chinese or english_link in chinese
+    for text in [readme, chinese]:
+        assert re.search(r"!\[[^\]]+\]\([^)]+\)", text)
+
+    documents = [Path("README.md"), Path("docs/README_CN.md"), *Path("docs").glob("USAGE*.md")]
+    for path in documents:
+        text = path.read_text(encoding="utf-8")
+        for url in re.findall(r"\]\(([^\s)]+)\)", text):
+            target = urlsplit(url)
+            if target.scheme or target.netloc or not target.path:
+                continue
+            assert (path.parent / target.path).exists(), f"{path}: missing {url}"
 
 
 def test_compose_user_path_exists_and_uses_mock_adapter():
