@@ -4,7 +4,7 @@
 
 [![arXiv](https://img.shields.io/badge/arXiv-2609.18520-b31b1b.svg)](https://arxiv.org/abs/2609.18520)
 
-[中文](docs/README_CN.md) · [Paper](https://arxiv.org/abs/2609.18520) · [Paper appendix](docs/PAPER_APPENDIX.md) · [User guide](docs/USAGE.md)
+[中文](docs/README_CN.md) · [Project page](https://admire-ljb.github.io/AeroWeaver/) · [Paper](https://arxiv.org/abs/2609.18520) · [Paper appendix](docs/PAPER_APPENDIX.md) · [User guide](docs/USAGE.md)
 
 AeroWeaver turns natural-language missions into coordinated multi-UAV execution.
 It connects LLM agents to registered skills, gives each UAV its own decision

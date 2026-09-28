@@ -4,7 +4,7 @@
 
 [![arXiv](https://img.shields.io/badge/arXiv-2609.18520-b31b1b.svg)](https://arxiv.org/abs/2609.18520)
 
-[English](../README.md) · [论文](https://arxiv.org/abs/2609.18520) · [论文附录](PAPER_APPENDIX.md) · [使用指南](USAGE_CN.md)
+[English](../README.md) · [项目主页](https://admire-ljb.github.io/AeroWeaver/) · [论文](https://arxiv.org/abs/2609.18520) · [论文附录](PAPER_APPENDIX.md) · [使用指南](USAGE_CN.md)
 
 AeroWeaver 将自然语言任务转化为多无人机协同行动：通过已注册技能执行模型决策，
 让每架无人机拥有独立的决策上下文与执行通道，并复用相同任务和角色的执行经验来改进技能选择，无需重新训练模型。
