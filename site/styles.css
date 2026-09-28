@@ -10,9 +10,9 @@ h3{font-size:20px;line-height:1.4}
 strong,b{font-weight:700}
 a{color:var(--link);text-decoration:none;text-underline-offset:3px}
 a:hover{text-decoration:underline}
-button{font:inherit;cursor:pointer}
+button,select{font:inherit;cursor:pointer}
 button,a{touch-action:manipulation}
-button:focus-visible,a:focus-visible,[tabindex]:focus-visible,summary:focus-visible{outline:2px solid var(--link);outline-offset:4px}
+button:focus-visible,select:focus-visible,a:focus-visible,[tabindex]:focus-visible,summary:focus-visible{outline:2px solid var(--link);outline-offset:4px}
 img{max-width:100%;height:auto;display:block}
 video{display:block;width:100%;height:100%;background:#101010;object-fit:contain}
 [hidden]{display:none!important}
@@ -106,6 +106,10 @@ td.ours,th.ours{font-weight:700;color:#303030;background:#f5f5f5}
 .figure-grid figcaption strong{display:block;color:#444;font-size:15px;line-height:1.45;margin-bottom:6px}
 
 /* Video captions follow the paper captions. */
+.video-options{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:7px;font-size:12px;line-height:1.5;color:var(--muted);text-align:left}
+.video-options label{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.video-options select{padding:3px 7px;border:1px solid #ccc;border-radius:3px;background:white;color:#444;font-size:12px}
+.video-status{margin-right:auto}
 .full-demo figcaption{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px}
 .full-demo figcaption strong{color:#444;font-size:15px}
 .full-demo figcaption a{margin-left:auto}
@@ -126,7 +130,7 @@ td.ours,th.ours{font-weight:700;color:#303030;background:#f5f5f5}
 .citation-header h3{font-size:20px}
 .citation-header button{padding:5px 11px;border:1px solid #ccc;border-radius:3px;background:white;color:#555;font-size:12px}
 .citation-header button:hover{background:#f0f0f0}
-pre{overflow-x:auto;margin:0;padding:20px 22px;border:1px solid #e0e0e0;border-radius:4px;background:#f5f5f5;color:#3d3d3d;font:13px/1.6 Consolas,"Liberation Mono",monospace}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:20px 22px;border:1px solid #e0e0e0;border-radius:4px;background:#f5f5f5;color:#3d3d3d;font:13px/1.6 Consolas,"Liberation Mono",monospace}
 footer{padding:26px 0 30px;border-top:1px solid var(--rule);color:#777;text-align:center;font-size:13px}
 .footer-brand{font-weight:700;color:#555;font-size:15px}
 footer p{margin-top:3px}
