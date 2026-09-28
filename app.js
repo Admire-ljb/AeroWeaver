@@ -21,9 +21,6 @@
       if (next !== undefined) { event.preventDefault(); activateTab(tabs[next]); tabs[next].focus(); }
     });
   });
-  document.querySelectorAll('[data-activate]').forEach(link => {
-    link.addEventListener('click', () => activateTab(document.getElementById('tab-' + link.dataset.activate)));
-  });
 
   const dialog = document.getElementById('figure-dialog');
   const enlarged = document.getElementById('enlarged-figure');
@@ -94,13 +91,6 @@
     }, {threshold: .35});
     teaserObserver.observe(teaser);
 
-    const navigation = [...document.querySelectorAll('.nav-links a')];
-    const sectionObserver = new IntersectionObserver(entries => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) navigation.forEach(link => link.classList.toggle('active', link.hash === '#' + entry.target.id));
-      });
-    }, {rootMargin: '-15% 0px -55% 0px'});
-    document.querySelectorAll('section[id]').forEach(section => sectionObserver.observe(section));
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden) videos.forEach(video => video.pause()); });
 

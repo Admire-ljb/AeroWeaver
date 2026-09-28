@@ -2,6 +2,8 @@
 
 A dependency-free, responsive academic project page. All local assets use relative paths and work at the GitHub Pages project path `/AeroWeaver/`.
 
+The layout follows a continuous academic reading order, with a single text column, standard Arial typography, unframed paper figures, and full-width results tables. Mechanism tabs, figure enlargement, and video chapters remain available without adding dashboard-style cards.
+
 ## Local preview
 
 From the repository root:
