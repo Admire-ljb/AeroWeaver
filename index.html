@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AeroWeaver — Distributed, Adaptive Swarm Execution</title>
+  <meta name="description" content="AeroWeaver weaves aerial skills into distributed, adaptive swarm execution through task-conditioned skill activation, local coordination, and experience-guided adaptation.">
+  <meta name="theme-color" content="#147d85">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="AeroWeaver: From Task Instructions to Coordinated Flight">
+  <meta property="og:description" content="An embodied-agent harness for distributed, adaptive UAV swarms. Explore the paper, system, simulation, and physical flight demonstrations.">
+  <meta property="og:url" content="https://admire-ljb.github.io/AeroWeaver/">
+  <meta property="og:image" content="https://admire-ljb.github.io/AeroWeaver/assets/images/social-preview.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="citation_title" content="AeroWeaver: An Embodied-Agent Harness for Weaving Aerial Skills into Distributed, Adaptive Swarm Execution">
+  <meta name="citation_author" content="Jiabin Lou">
+  <meta name="citation_author" content="Yirong Yang">
+  <meta name="citation_author" content="Haopeng Wang">
+  <meta name="citation_author" content="Xuxin Lv">
+  <meta name="citation_author" content="Xinyu Liu">
+  <meta name="citation_author" content="Diyuan Hou">
+  <meta name="citation_author" content="Xuehong Liu">
+  <meta name="citation_author" content="Rongye Shi">
+  <meta name="citation_author" content="Wenjun Wu">
+  <meta name="citation_publication_date" content="2026/09/16">
+  <meta name="citation_pdf_url" content="https://arxiv.org/pdf/2609.18520">
+  <link rel="canonical" href="https://admire-ljb.github.io/AeroWeaver/">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <nav class="nav-shell" aria-label="Main navigation">
+      <a class="brand" href="#top"><img src="assets/favicon.svg" width="28" height="28" alt="">AeroWeaver</a>
+      <div class="nav-links"><a href="#overview">Overview</a><a href="#method">Method</a><a href="#results">Results</a><a href="#demos">Demos</a><a href="#citation">Citation</a></div>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero container" id="top" aria-labelledby="paper-title">
+      <p class="eyebrow">Preprint · 2026</p>
+      <h1 id="paper-title"><span class="project-name">Aero<span>Weaver</span></span><span class="paper-title">An Embodied-Agent Harness for Weaving Aerial Skills<br class="desktop-break"> into Distributed, Adaptive Swarm Execution</span></h1>
+      <div class="authors" aria-label="Authors"><span>Jiabin Lou</span><span>Yirong Yang</span><span>Haopeng Wang</span><span>Xuxin Lv</span><span>Xinyu Liu</span><span class="author-break" aria-hidden="true"></span><span>Diyuan Hou</span><span>Xuehong Liu</span><span>Rongye Shi</span><span>Wenjun Wu<sup>*</sup></span></div>
+      <p class="affiliation">Beihang University, Beijing, China</p>
+      <p class="corresponding"><sup>*</sup> Corresponding author</p>
+      <div class="resource-links">
+        <a class="pill primary" href="https://arxiv.org/abs/2609.18520" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/></svg>Paper</a>
+        <a class="pill" href="https://github.com/Admire-ljb/AeroWeaver" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16"/></svg>Code</a>
+        <a class="pill" href="#demo-video"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7z"/></svg>Video</a>
+        <a class="pill" href="https://github.com/Admire-ljb/AeroWeaver/blob/main/docs/PAPER_APPENDIX.md" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h7l2 2 2-2h7v15h-7l-2 2-2-2H3zM12 7v15"/></svg>Supplement</a>
+      </div>
+      <p class="hero-statement">From task instructions to coordinated flight.</p>
+      <figure class="teaser">
+        <div class="video-shell"><video id="teaser" muted loop playsinline controls preload="metadata" poster="assets/images/teaser-poster.webp" aria-label="Nine-second overview of simulation and physical flight"><source src="assets/videos/teaser.mp4" type="video/mp4">Your browser does not support HTML video. <a href="assets/videos/teaser.mp4">Download the teaser</a>.</video></div>
+        <figcaption>One harness, multiple missions: terrain-based coordination, coverage, vehicle following, and pursuit–encirclement.<br><span>Simulation and physical flight; physical scenes include synchronized trajectory replay.</span></figcaption>
+      </figure>
+      <div class="mechanism-strip" aria-label="Three core mechanisms"><a href="#method" data-activate="skills"><span>01</span> Skill activation</a><a href="#method" data-activate="coordination"><span>02</span> Distributed coordination</a><a href="#method" data-activate="experience"><span>03</span> Experience-guided adaptation</a></div>
+    </section>
+
+    <section class="section soft" id="overview" aria-labelledby="overview-title">
+      <div class="container">
+        <div class="section-heading"><p class="eyebrow">The idea</p><h2 id="overview-title">From individual skills to swarm behavior</h2></div>
+        <div class="abstract prose">
+          <p>Language models can interpret mission instructions, but a UAV swarm also needs executable capabilities, coordination between agents, and a way to use experience from earlier decisions. <strong>AeroWeaver</strong> connects these elements in an embodied-agent harness.</p>
+          <p>The harness activates a task-relevant subset of aerial skills, binds each local agent to one UAV, and supports directed peer communication. Role-indexed experience then uses reward evidence to refine subsequent skill selection. This enables online adaptation while keeping model weights and skill executors unchanged.</p>
+        </div>
+        <figure class="paper-figure overview-figure">
+          <a class="figure-link" href="assets/images/framework.webp" data-lightbox><img src="assets/images/framework.webp" width="2400" height="1374" loading="lazy" decoding="async" alt="AeroWeaver framework: task-conditioned skill activation, distributed UAV-bound agents, and a reward-guided experience feedback loop."><span class="zoom-hint">View full figure ↗</span></a>
+          <figcaption><strong>AeroWeaver at a glance.</strong> Mission context selects available skills; UAV-bound agents coordinate locally; retrieved experience refines the next decision.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="section" id="method" aria-labelledby="method-title">
+      <div class="container">
+        <div class="section-heading"><p class="eyebrow">Three mechanisms</p><h2 id="method-title">Activate. Coordinate. Adapt.</h2><p>A shared mission, local decisions, and experience that carries forward.</p></div>
+        <div class="method-tabs" role="tablist" aria-label="Explore AeroWeaver mechanisms">
+          <button id="tab-skills" role="tab" aria-selected="true" aria-controls="panel-skills" data-tab="skills"><span>01</span> Skill activation</button>
+          <button id="tab-coordination" role="tab" aria-selected="false" aria-controls="panel-coordination" tabindex="-1" data-tab="coordination"><span>02</span> Distributed coordination</button>
+          <button id="tab-experience" role="tab" aria-selected="false" aria-controls="panel-experience" tabindex="-1" data-tab="experience"><span>03</span> Experience-guided adaptation</button>
+        </div>
+        <article class="method-panel" id="panel-skills" role="tabpanel" aria-labelledby="tab-skills" tabindex="0">
+          <div class="method-copy"><h3>Give each agent the skills its role needs.</h3><p>Mission parsing and skill retrieval turn an instruction into a compact execution context. The Commander assigns roles and activates agent-specific skill subsets from a governed catalog.</p><p class="mechanism-note">Task context → active skill set → executable choices</p></div>
+          <a class="figure-link method-image" href="assets/images/skill-activation.webp" data-lightbox><img src="assets/images/skill-activation.webp" width="2400" height="2065" loading="lazy" alt="Mission parsing and skill retrieval build a Commander context and role-specific skill subsets."><span class="zoom-hint">View full figure ↗</span></a>
+        </article>
+        <article class="method-panel" id="panel-coordination" role="tabpanel" aria-labelledby="tab-coordination" tabindex="0" hidden>
+          <div class="method-copy"><h3>Coordinate through local decisions and peer reports.</h3><p>Each agent observes its surroundings, exchanges directed messages, and selects actions for its own UAV. The Commander supplies shared mission context, while flight decisions remain with body-bound local agents.</p><p class="mechanism-note">Local observation → peer coordination → own-body action</p></div>
+          <a class="figure-link method-image" href="assets/images/coordination.webp" data-lightbox><img src="assets/images/coordination.webp" width="2400" height="806" loading="lazy" alt="A mission console, communicating UAV-bound agents, and an Unreal Engine UAV scene illustrate distributed execution."><span class="zoom-hint">View full figure ↗</span></a>
+        </article>
+        <article class="method-panel" id="panel-experience" role="tabpanel" aria-labelledby="tab-experience" tabindex="0" hidden>
+          <div class="method-copy"><h3>Use past outcomes to refine the next action.</h3><p>Agents retrieve role-relevant state–action–reward experience, estimate skill advantages, and correct the current skill ranking. Executed transitions update memory for later decisions.</p><p class="mechanism-note">Retrieve experience → correct skill ranking → update memory</p></div>
+          <a class="figure-link method-image" href="assets/images/experience.webp" data-lightbox><img src="assets/images/experience.webp" width="2400" height="876" loading="lazy" alt="Retrieved trajectories provide reward evidence for skill correction; new executed transitions update role-indexed memory."><span class="zoom-hint">View full figure ↗</span></a>
+        </article>
+      </div>
+    </section>
+
+    <section class="section soft" id="results" aria-labelledby="results-title">
+      <div class="container">
+        <div class="section-heading"><p class="eyebrow">Evaluation</p><h2 id="results-title">Nine tasks. Three complementary mechanisms.</h2><p>MPE-inspired tasks span spatial coordination, communication, and cooperative–competitive interaction.</p></div>
+        <div class="findings">
+          <div><strong>9 / 9</strong><p>highest mean episode rewards<br>among the compared methods</p></div>
+          <div><strong>52–70<span>%</span></strong><p>fewer tokens than HMAS-2<br>in the reported episode comparisons</p></div>
+          <div><strong>No weight updates</strong><p>experience guides skill selection<br>with fixed models and executors</p></div>
+        </div>
+        <div class="results-grid">
+          <div class="table-card"><h3>Task performance</h3><p class="table-intro">Episode reward, mean ± SD over 10 episodes. Higher is better.</p>
+            <div class="table-scroll" tabindex="0" role="region" aria-label="Episode reward comparison table">
+              <table><caption class="sr-only">Main results from Table II of the paper.</caption><thead><tr><th scope="col">Task</th><th scope="col">Centralized</th><th scope="col">HMAS-2</th><th scope="col" class="ours">AeroWeaver</th></tr></thead><tbody>
+                <tr><th scope="row">Coverage</th><td>−14.81 <small>± 1.02</small></td><td>−14.81 <small>± 1.00</small></td><td class="ours">−14.20 <small>± 0.95</small></td></tr>
+                <tr><th scope="row">Pursuit-evasion</th><td>90.00 <small>± 5.00</small></td><td>70.00 <small>± 4.60</small></td><td class="ours">130.00 <small>± 4.80</small></td></tr>
+                <tr><th scope="row">Guided navigation</th><td>−8.53 <small>± 0.36</small></td><td>−8.53 <small>± 0.35</small></td><td class="ours">−7.10 <small>± 0.32</small></td></tr>
+                <tr><th scope="row">Private communication</th><td>−2.00 <small>± 0.11</small></td><td>−2.00 <small>± 0.10</small></td><td class="ours">−1.85 <small>± 0.09</small></td></tr>
+                <tr><th scope="row">Circular formation</th><td>−8.45 <small>± 0.12</small></td><td>−8.45 <small>± 0.11</small></td><td class="ours">−8.20 <small>± 0.10</small></td></tr>
+                <tr><th scope="row">Line formation</th><td>−13.99 <small>± 0.27</small></td><td>−7.62 <small>± 0.23</small></td><td class="ours">−7.30 <small>± 0.22</small></td></tr>
+                <tr><th scope="row">World communication</th><td>129.00 <small>± 5.30</small></td><td>115.00 <small>± 0.90</small></td><td class="ours">135.00 <small>± 5.20</small></td></tr>
+                <tr><th scope="row">Collection-delivery</th><td>33.91 <small>± 0.85</small></td><td>38.70 <small>± 0.78</small></td><td class="ours">49.50 <small>± 0.68</small></td></tr>
+                <tr><th scope="row">Goal concealment</th><td>−1.06 <small>± 0.14</small></td><td>−0.41 <small>± 0.10</small></td><td class="ours">−0.25 <small>± 0.11</small></td></tr>
+              </tbody></table>
+            </div>
+            <p class="small-note">Raw returns use each task’s reward function; values should be compared within a row.</p>
+          </div>
+          <figure class="paper-figure token-figure"><h3>Token efficiency</h3><a class="figure-link" href="assets/images/tokens.webp" data-lightbox><img src="assets/images/tokens.webp" loading="lazy" alt="Per-episode token consumption for Centralized, HMAS-2, and AeroWeaver across nine tasks."><span class="zoom-hint">View full figure ↗</span></a><figcaption>AeroWeaver uses fewer tokens than HMAS-2 on all nine tasks and fewer than Centralized on four. Totals include setup and decision calls from one episode per condition, with task-dependent episode lengths.</figcaption></figure>
+        </div>
+        <details class="ablation-details"><summary>Component ablations <span>Explore the contribution of each mechanism</span><span class="expand-icon" aria-hidden="true">+</span></summary>
+          <div class="ablation-content"><p>Relative mean scores from Table III. AeroWeaver is the reference at 1; each ablation removes one component.</p>
+            <div class="table-scroll" tabindex="0" role="region" aria-label="Component ablation scores"><table><thead><tr><th scope="col">Task</th><th scope="col">w/o activation</th><th scope="col">w/o coordination reports</th><th scope="col">w/o reward correction</th><th scope="col">Scale K<sub>t</sub></th></tr></thead><tbody>
+              <tr><th scope="row">Coverage</th><td>0.650</td><td>0.708</td><td>0.764</td><td>17.077</td></tr>
+              <tr><th scope="row">Pursuit-evasion</th><td>0.670</td><td>0.781</td><td>0.823</td><td>17.606</td></tr>
+              <tr><th scope="row">Guided navigation</th><td>0.734</td><td>0.632</td><td>0.802</td><td>15.029</td></tr>
+              <tr><th scope="row">Private communication</th><td>0.812</td><td>0.617</td><td>0.874</td><td>15.969</td></tr>
+              <tr><th scope="row">Circular formation</th><td>0.762</td><td>0.763</td><td>0.825</td><td>16.801</td></tr>
+              <tr><th scope="row">Line formation</th><td>0.722</td><td>0.821</td><td>0.798</td><td>14.280</td></tr>
+              <tr><th scope="row">World communication</th><td>0.790</td><td>0.633</td><td>0.854</td><td>35.217</td></tr>
+              <tr><th scope="row">Collection-delivery</th><td>0.632</td><td>0.628</td><td>0.814</td><td>10.881</td></tr>
+              <tr><th scope="row">Goal concealment</th><td>0.777</td><td>0.605</td><td>0.780</td><td>13.505</td></tr>
+            </tbody></table></div>
+            <p class="formula">Q<sub>t,m</sub> = 1 + (R̄<sub>t,m</sub> − R̄<sub>t,full</sub>) / K<sub>t</sub></p><p class="small-note">K<sub>t</sub> is a fixed positive task-specific scale shared by the variants. This affine score is not a percentage of raw reward. Removing coordination reports has the largest effect in five tasks; removing activation has the largest effect in the other four.</p>
+          </div>
+        </details>
+        <div class="additional-results">
+          <h3>Adaptation and sensitivity</h3>
+          <div class="figure-grid">
+            <figure><a class="figure-link" href="assets/images/adaptation.webp" data-lightbox><img src="assets/images/adaptation.webp" loading="lazy" alt="Experience-guided adaptation trajectories across nine tasks."><span class="zoom-hint">Enlarge ↗</span></a><figcaption><strong>Experience-guided adaptation</strong>Reward-informed skill selection improves with accumulated experience.</figcaption></figure>
+            <figure><a class="figure-link" href="assets/images/backbones.webp" data-lightbox><img src="assets/images/backbones.webp" loading="lazy" alt="Task-wise comparison of different LLM backbones."><span class="zoom-hint">Enlarge ↗</span></a><figcaption><strong>LLM backbone sensitivity</strong>Task-wise comparisons across four model backbones.</figcaption></figure>
+            <figure><a class="figure-link" href="assets/images/prompts.webp" data-lightbox><img src="assets/images/prompts.webp" loading="lazy" alt="Original, paraphrased, reordered, and distractor-containing mission prompts compared across tasks."><span class="zoom-hint">Enlarge ↗</span></a><figcaption><strong>Prompt perturbation sensitivity</strong>Mission wording varies while the active skill set stays fixed.</figcaption></figure>
+          </div>
+          <p class="small-note">Reference scores are set to 1 within each task: the final AeroWeaver score for adaptation, DeepSeek-V4-Flash for backbone comparisons, and the original prompt for perturbations. Quantitative results use the paper’s point-mass simulation setting.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="demos" aria-labelledby="demos-title">
+      <div class="container">
+        <div class="section-heading"><p class="eyebrow">See it in action</p><h2 id="demos-title">From simulation to physical flight</h2><p>Follow the three mechanisms through the interface, then see formation and pursuit–encirclement missions.</p></div>
+        <figure class="full-demo" id="demo-video"><div class="video-shell"><video id="main-video" controls playsinline preload="none" poster="assets/images/demo-poster.webp" aria-label="Complete narrated AeroWeaver demonstration, 2 minutes 57 seconds"><source src="assets/videos/aeroweaver-demo.mp4" type="video/mp4">Your browser does not support HTML video. <a href="assets/videos/aeroweaver-demo.mp4">Download the demo</a>.</video></div><figcaption><strong>Full demonstration</strong><span>2 min 57 s · English narration · 1080p</span><a href="assets/videos/aeroweaver-demo.mp4" download>Download video ↓</a></figcaption></figure>
+        <div class="chapters" aria-label="Video chapters"><button data-time="13"><span>00:13</span> Skills</button><button data-time="40"><span>00:40</span> Coordination</button><button data-time="63"><span>01:03</span> Experience</button><button data-time="88"><span>01:28</span> Formation</button><button data-time="98"><span>01:38</span> Pursuit</button></div>
+        <p class="chapter-status sr-only" aria-live="polite"></p>
+        <div class="demo-grid">
+          <article class="demo-card"><div class="video-shell"><video controls playsinline preload="none" poster="assets/images/cockpit-poster.webp" aria-label="First-person UAV cockpit video"><source src="assets/videos/cockpit.mp4" type="video/mp4"></video></div><div class="demo-copy"><span class="demo-tag">Simulation · First-person view</span><h3>On board the UAV</h3><p>A continuous cockpit view shows the environment from the UAV’s perspective during execution.</p></div></article>
+          <article class="demo-card"><div class="video-shell"><video controls playsinline preload="none" poster="assets/images/simulation-poster.webp" aria-label="Distributed swarm coordination in simulation"><source src="assets/videos/simulation.mp4" type="video/mp4"></video></div><div class="demo-copy"><span class="demo-tag">Simulation · Coordination</span><h3>Local decisions, collective motion</h3><p>Trajectories, peer reports, and skill calls connect inter-agent communication to the swarm’s actions.</p></div></article>
+          <article class="demo-card"><div class="video-shell"><video controls playsinline preload="none" poster="assets/images/formation-poster.webp" aria-label="Physical UAV formation demonstrations"><source src="assets/videos/formation.mp4" type="video/mp4"></video></div><div class="demo-copy"><span class="demo-tag">Physical flight · Formation</span><h3>Instructions become formations</h3><p>Six formation examples illustrate how different mission instructions organize the swarm.</p></div></article>
+          <article class="demo-card"><div class="video-shell"><video controls playsinline preload="none" poster="assets/images/pursuit-poster.webp" aria-label="Four blue UAVs pursue and surround two red evaders"><source src="assets/videos/pursuit.mp4" type="video/mp4"></video></div><div class="demo-copy"><span class="demo-tag">Physical flight · Pursuit–encirclement</span><h3>Four pursuers, two evaders</h3><p>Blue UAVs surround the red team; encircled red UAVs land. Physical flight is shown alongside synchronized trajectory replay.</p></div></article>
+        </div>
+        <p class="small-note demo-note">Flight videos provide qualitative system demonstrations. Quantitative task comparisons are reported separately above.</p>
+      </div>
+    </section>
+
+    <section class="section soft" id="citation" aria-labelledby="citation-title"><div class="container citation-container">
+      <div class="section-heading"><p class="eyebrow">Resources</p><h2 id="citation-title">Explore and cite AeroWeaver</h2></div>
+      <div class="resource-grid"><a href="https://arxiv.org/abs/2609.18520" target="_blank" rel="noopener noreferrer"><strong>Read the paper <span>↗</span></strong><small>Method, experiments, and analysis</small></a><a href="https://github.com/Admire-ljb/AeroWeaver" target="_blank" rel="noopener noreferrer"><strong>Explore the code <span>↗</span></strong><small>Implementation and setup instructions</small></a><a href="https://github.com/Admire-ljb/AeroWeaver/blob/main/docs/PAPER_APPENDIX.md" target="_blank" rel="noopener noreferrer"><strong>Supplementary material <span>↗</span></strong><small>Task definitions and system details</small></a></div>
+      <div class="citation-box"><div class="citation-header"><h3>BibTeX</h3><button id="copy-citation" type="button">Copy citation</button></div><pre><code id="bibtex">@misc{lou2026aeroweaver,
+  title = {AeroWeaver: An Embodied-Agent Harness for Weaving Aerial Skills
+           into Distributed, Adaptive Swarm Execution},
+  author = {Jiabin Lou and Yirong Yang and Haopeng Wang and Xuxin Lv
+            and Xinyu Liu and Diyuan Hou and Xuehong Liu
+            and Rongye Shi and Wenjun Wu},
+  year = {2026},
+  eprint = {2609.18520},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.AI},
+  url = {https://arxiv.org/abs/2609.18520}
+}</code></pre><p id="copy-status" class="sr-only" role="status"></p></div>
+    </div></section>
+  </main>
+  <footer><div class="container"><a class="footer-brand" href="#top">AeroWeaver</a><p>Beihang University · 2026</p><p class="footer-credit">Project page inspired by <a href="https://admire-ljb.github.io/VoLN-UAV/" target="_blank" rel="noopener noreferrer">VoLN</a>.</p></div></footer>
+  <dialog id="figure-dialog" aria-label="Enlarged paper figure"><div class="dialog-toolbar"><p>Paper figure</p><a id="original-figure" href="assets/images/framework.webp" target="_blank" rel="noopener noreferrer">Open original ↗</a><button id="close-figure" aria-label="Close enlarged figure">×</button></div><div class="dialog-image"><img id="enlarged-figure" alt=""></div></dialog>
+</body>
+</html>
