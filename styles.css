@@ -160,7 +160,6 @@ pre{margin:0;overflow-x:auto;padding:24px;font:12px/1.8 Consolas,"SFMono-Regular
 footer{padding:35px 0 39px;text-align:center;color:var(--muted);font-size:12px}
 .footer-brand{font-weight:700;color:#344d5a;font-size:17px;letter-spacing:-.025em}
 footer p{margin-top:6px}
-.footer-credit{font-size:11px;color:#7d8990;margin-top:13px}
 dialog{width:min(94vw,1600px);max-width:94vw;max-height:92vh;border:1px solid #d7e1e5;border-radius:10px;padding:0;background:#fff;box-shadow:0 18px 80px #03151f30}
 dialog::backdrop{background:#0b2029bd;backdrop-filter:blur(3px)}
 .dialog-toolbar{position:sticky;top:0;background:#fff;display:flex;align-items:center;padding:10px 18px;gap:18px;border-bottom:1px solid var(--line);z-index:1;font-size:13px}
