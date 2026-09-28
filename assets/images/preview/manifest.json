@@ -1,0 +1,156 @@
+[
+  {
+    "file": "preview/adaptation-640.webp",
+    "width": 640,
+    "height": 428,
+    "bytes": 23354,
+    "original_bytes": 40816
+  },
+  {
+    "file": "preview/backbones-640.webp",
+    "width": 640,
+    "height": 428,
+    "bytes": 32118,
+    "original_bytes": 50744
+  },
+  {
+    "file": "preview/cockpit-poster-960.webp",
+    "width": 960,
+    "height": 540,
+    "bytes": 34028,
+    "original_bytes": 127880
+  },
+  {
+    "file": "preview/coordination-640.webp",
+    "width": 640,
+    "height": 215,
+    "bytes": 38610,
+    "original_bytes": 277252
+  },
+  {
+    "file": "preview/coordination-960.webp",
+    "width": 960,
+    "height": 322,
+    "bytes": 70156,
+    "original_bytes": 277252
+  },
+  {
+    "file": "preview/coordination-1440.webp",
+    "width": 1440,
+    "height": 484,
+    "bytes": 117572,
+    "original_bytes": 277252
+  },
+  {
+    "file": "preview/demo-poster-960.webp",
+    "width": 960,
+    "height": 540,
+    "bytes": 33644,
+    "original_bytes": 114742
+  },
+  {
+    "file": "preview/experience-640.webp",
+    "width": 640,
+    "height": 234,
+    "bytes": 37706,
+    "original_bytes": 208544
+  },
+  {
+    "file": "preview/experience-960.webp",
+    "width": 960,
+    "height": 350,
+    "bytes": 60362,
+    "original_bytes": 208544
+  },
+  {
+    "file": "preview/experience-1440.webp",
+    "width": 1440,
+    "height": 526,
+    "bytes": 97476,
+    "original_bytes": 208544
+  },
+  {
+    "file": "preview/formation-poster-960.webp",
+    "width": 960,
+    "height": 540,
+    "bytes": 59400,
+    "original_bytes": 214832
+  },
+  {
+    "file": "preview/framework-640.webp",
+    "width": 640,
+    "height": 366,
+    "bytes": 68638,
+    "original_bytes": 512694
+  },
+  {
+    "file": "preview/framework-960.webp",
+    "width": 960,
+    "height": 550,
+    "bytes": 124270,
+    "original_bytes": 512694
+  },
+  {
+    "file": "preview/framework-1440.webp",
+    "width": 1440,
+    "height": 824,
+    "bytes": 217138,
+    "original_bytes": 512694
+  },
+  {
+    "file": "preview/prompts-640.webp",
+    "width": 640,
+    "height": 428,
+    "bytes": 22672,
+    "original_bytes": 35254
+  },
+  {
+    "file": "preview/pursuit-poster-960.webp",
+    "width": 960,
+    "height": 540,
+    "bytes": 50862,
+    "original_bytes": 174018
+  },
+  {
+    "file": "preview/simulation-poster-960.webp",
+    "width": 960,
+    "height": 540,
+    "bytes": 37622,
+    "original_bytes": 137546
+  },
+  {
+    "file": "preview/skill-activation-640.webp",
+    "width": 640,
+    "height": 551,
+    "bytes": 48732,
+    "original_bytes": 288152
+  },
+  {
+    "file": "preview/skill-activation-960.webp",
+    "width": 960,
+    "height": 826,
+    "bytes": 80142,
+    "original_bytes": 288152
+  },
+  {
+    "file": "preview/skill-activation-1440.webp",
+    "width": 1440,
+    "height": 1239,
+    "bytes": 133400,
+    "original_bytes": 288152
+  },
+  {
+    "file": "preview/teaser-poster-960.webp",
+    "width": 960,
+    "height": 540,
+    "bytes": 46032,
+    "original_bytes": 162924
+  },
+  {
+    "file": "preview/tokens-640.webp",
+    "width": 640,
+    "height": 380,
+    "bytes": 14030,
+    "original_bytes": 18218
+  }
+]

@@ -24,7 +24,15 @@ Open `http://127.0.0.1:8766/`.
 
 Main results preserve the raw mean ± SD from Table II. Ablations reproduce Table III, including the fixed task scales and affine score definition. Physical videos are qualitative demonstrations; synchronized trajectory replays are described separately from the quantitative simulation evaluation.
 
-The page uses no analytics, third-party JavaScript, external fonts, API services, or build dependencies. Video excerpts are silent; the full demo includes narration and burned-in English subtitles. Videos use native playback controls, and only the muted teaser starts automatically when visible (unless reduced motion is requested).
+The page uses no analytics, third-party JavaScript, external fonts, API services, or build dependencies. Video excerpts are silent; the full demo includes narration and burned-in English subtitles. Videos use native playback controls. Only the muted teaser starts automatically when visible, unless reduced motion or data saving is requested.
+
+Playback defaults to smaller 720p copies (AV1/WebM when supported, with an H.264/MP4 fallback). Each player offers the original 1080p version without changing the playback position. The already-small formation clip keeps its 1080p source. Only the nearest player is preloaded; playing another video cancels competing background transfers. Offscreen videos are not all fetched on page load. Without JavaScript, the native players still use the 720p MP4 files. All video files remain on the same GitHub Pages origin.
+
+Run `python scripts/prepare_homepage_playback.py` after exporting or replacing the original video assets. This generates `assets/videos/playback/` using ffmpeg (libsvtav1, libopus, libx264), without modifying the 1080p files. Encoding uses 4-second keyframe intervals and a constrained bitrate; the MP4 index and WebM cues are placed before the video data to support early playback and seeking. The generated manifest records sizes for comparison.
+
+BibTeX keeps one field per source line. The page wraps long fields to the available width; copying the citation preserves the field structure without manually inserted continuation lines.
+
+Paper figures use 640/960/1440-pixel responsive previews with native lazy loading and reserved aspect ratios. Figure enlargement loads the original asset. Posters use smaller 960-pixel previews, with the teaser poster prioritized on first load. Run `python scripts/prepare_homepage_images.py` after changing the full-size images.
 
 ## Updating the site
 
