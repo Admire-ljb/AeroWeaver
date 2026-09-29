@@ -1,6 +1,6 @@
 # AeroWeaver
 
-[匿名项目主页](https://anonymous.4open.science/w/AeroWeaver-D028/) · [论文附录](PAPER_APPENDIX.md)
+[![访问 AeroWeaver 项目主页：方法框架、演示视频与实验结果](images/project-homepage.svg)](https://anonymous.4open.science/w/AeroWeaver-D028/)
 
 <p align="right">
   <a href="../README.md">English</a> · <strong>中文</strong>
@@ -9,10 +9,6 @@
 AeroWeaver 是一个面向多无人机协同控制的 Web 系统，集成无人机状态同步、传感器画面、驾驶舱控制、技能执行、编队控制、轨迹导出和可选的 LLM 任务规划。
 
 系统支持 AirSim、PX4/Gazebo 和 Mock 适配器，并提供中英文界面。
-
-## 论文附录
-
-[在线阅读论文附录（英文）](PAPER_APPENDIX.md)：包含实现细节、任务定义与奖励函数、技能接口、运行截图、经验修正记录及补充实验说明。
 
 ## Web 控制台
 
@@ -187,6 +183,8 @@ requirements/   按用途拆分的 Python 依赖
 scripts/        启动、诊断与仓库维护脚本
 tests/          后端、适配器、协议与安全测试
 ```
+
+实现细节、任务定义、奖励函数与补充实验记录见[论文附录（英文）](PAPER_APPENDIX.md)。
 
 ## 安全说明
 

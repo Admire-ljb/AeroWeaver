@@ -1,6 +1,6 @@
 # AeroWeaver
 
-[Anonymous project page](https://anonymous.4open.science/w/AeroWeaver-D028/) · [Paper appendix](docs/PAPER_APPENDIX.md)
+[![Visit the AeroWeaver Project Homepage — framework, videos, and experimental results](docs/images/project-homepage.svg)](https://anonymous.4open.science/w/AeroWeaver-D028/)
 
 <p align="right">
   <strong>English</strong> · <a href="docs/README_CN.md">中文</a>
@@ -15,12 +15,6 @@ bilingual console.
 The runtime supports AirSim, PX4/Gazebo, and a dependency-light mock adapter.
 The same registered skill layer is available in both operator-controlled and
 LLM-controlled workflows.
-
-## Paper Appendix
-
-[Read the paper appendix](docs/PAPER_APPENDIX.md) for implementation details,
-task definitions and reward functions, skill interfaces, runtime screenshots,
-experience-correction records, and complementary evaluation details.
 
 ## Highlights
 
@@ -355,6 +349,9 @@ requirements/   Python dependency groups
 scripts/        Startup, diagnostics, and repository maintenance
 tests/          Backend, adapter, protocol, and safety tests
 ```
+
+Additional implementation details, task definitions, reward functions, and
+evaluation records are available in the [paper appendix](docs/PAPER_APPENDIX.md).
 
 ## Safety
 
