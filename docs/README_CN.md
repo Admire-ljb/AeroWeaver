@@ -1,6 +1,6 @@
 # AeroWeaver
 
-[![访问 AeroWeaver 项目主页：方法框架、演示视频与实验结果](images/project-homepage.svg)](https://anonymous.4open.science/w/AeroWeaver-D028/)
+### [项目主页 ↗](https://anonymous.4open.science/w/AeroWeaver-D028/)
 
 <p align="right">
   <a href="../README.md">English</a> · <strong>中文</strong>

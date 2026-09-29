@@ -1,6 +1,6 @@
 # AeroWeaver
 
-[![Visit the AeroWeaver Project Homepage — framework, videos, and experimental results](docs/images/project-homepage.svg)](https://anonymous.4open.science/w/AeroWeaver-D028/)
+### [Project Homepage ↗](https://anonymous.4open.science/w/AeroWeaver-D028/)
 
 <p align="right">
   <strong>English</strong> · <a href="docs/README_CN.md">中文</a>
