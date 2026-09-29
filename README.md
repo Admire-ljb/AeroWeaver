@@ -1,4 +1,4 @@
-# AeroWeaver
+# <img src="docs/images/aeroweaver-wordmark.svg" alt="AeroWeaver" width="360">
 
 ### [<u>▶ Click here to visit the Project Homepage</u>](https://anonymous.4open.science/w/AeroWeaver-D028/)
 

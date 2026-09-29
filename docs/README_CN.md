@@ -1,4 +1,4 @@
-# AeroWeaver
+# <img src="images/aeroweaver-wordmark.svg" alt="AeroWeaver" width="360">
 
 ### [<u>▶ 点击这里访问项目主页</u>](https://anonymous.4open.science/w/AeroWeaver-D028/)
 
