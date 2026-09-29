@@ -1,4 +1,4 @@
-# <img src="images/aeroweaver-wordmark.svg" alt="AeroWeaver" width="360">
+# <img src="images/aeroweaver-wordmark.svg" alt="AeroWeaver" width="360" style="background-color: transparent;">
 
 [<u>项目主页</u>](https://anonymous.4open.science/w/AeroWeaver-D028/) · [<u>演示视频</u>](https://anonymous.4open.science/w/AeroWeaver-D028/#demo-video) · [<u>English</u>](../README.md)
 

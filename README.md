@@ -1,6 +1,6 @@
-# <img src="docs/images/aeroweaver-wordmark.svg" alt="AeroWeaver" width="360">
+# <img src="docs/images/aeroweaver-wordmark.svg" alt="AeroWeaver" width="360" style="background-color: transparent;">
 
-[<u>Project Homepage</u>](https://anonymous.4open.science/w/AeroWeaver-D028/) · [<u>Demo Video</u>](https://anonymous.4open.science/w/AeroWeaver-D028/#demo-video) · [<u>中文</u>](docs/README_CN.md)
+[<u>Project Homepage</u>](https://anonymous.4open.science/w/AeroWeaver-D028/) · [<u>Demo Video</u>](https://anonymous.4open.science/w/AeroWeaver-D028/#demo-video)
 
 AeroWeaver is a Web-based multi-UAV coordination system for operating,
 observing, and orchestrating autonomous aerial vehicles. It combines live
