@@ -49,16 +49,11 @@
   const connection = navigator.connection;
   const saveData = connection?.saveData || /(^|-)2g$/.test(connection?.effectiveType || '');
 
-  // Pause competing players and cancel their unfinished background downloads.
-  // Keep the source attached so native play controls still work after suspension.
+  // The anonymous host does not support byte ranges. Preserve attached media
+  // when pausing so resuming never depends on seeking after video.load().
   function suspend(video) {
     video.pause();
     video.preload = 'none';
-    if (video.networkState === HTMLMediaElement.NETWORK_LOADING) {
-      const state = mediaState.get(video);
-      state.time ??= video.currentTime;
-      video.load();
-    }
   }
   function prioritize(video) {
     videos.forEach(other => { if (other !== video) suspend(other); });
@@ -87,16 +82,11 @@
     toolbar.append(status);
     state.status = status;
     if (video.dataset.hd) {
-      const label = document.createElement('label');
-      label.append('Quality');
-      const select = document.createElement('select');
-      select.setAttribute('aria-label', `Video quality: ${video.getAttribute('aria-label')}`);
-      select.add(new Option('720p · Fast', '720'));
-      select.add(new Option('1080p · HD', '1080'));
-      select.addEventListener('change', () => changeQuality(video, select.value));
-      label.append(select);
-      toolbar.append(label);
-      state.select = select;
+      const download = document.createElement('a');
+      download.href = video.dataset.hd;
+      download.setAttribute('download', '');
+      download.textContent = 'Download 1080p ↓';
+      toolbar.append(download);
       if (video.dataset.av1 && video.canPlayType('video/webm; codecs="av01.0.05M.08"')) {
         video.src = video.dataset.av1;
       }
@@ -125,28 +115,6 @@
     // Pointer/focus intent takes precedence over speculative viewport loading.
     video.addEventListener('pointerenter', () => { if (videos.every(v => v.paused)) prioritize(video); });
     video.addEventListener('focus', () => { if (videos.every(v => v.paused)) prioritize(video); });
-  });
-
-  const mainVideo = document.getElementById('main-video');
-  const chapters = [...document.querySelectorAll('[data-time]')];
-  const chapterStatus = document.querySelector('.chapter-status');
-  chapters.forEach(button => button.addEventListener('click', async () => {
-    const time = Number(button.dataset.time);
-    chapterStatus.textContent = '';
-    prioritize(mainVideo);
-    if (mainVideo.readyState >= 1) mainVideo.currentTime = time;
-    else mediaState.get(mainVideo).time = time;
-    mainVideo.scrollIntoView({behavior: reducedMotion.matches ? 'auto' : 'smooth', block: 'center'});
-    try { await mainVideo.play(); }
-    catch { chapterStatus.textContent = 'Chapter selected. Press play on the video to continue.'; }
-  }));
-  mainVideo.addEventListener('timeupdate', () => {
-    const active = chapters.findLastIndex(button => Number(button.dataset.time) <= mainVideo.currentTime);
-    chapters.forEach((button, index) => {
-      button.classList.toggle('active', index === active);
-      if (index === active) button.setAttribute('aria-current', 'true');
-      else button.removeAttribute('aria-current');
-    });
   });
 
   const teaser = document.getElementById('teaser');
