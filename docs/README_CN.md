@@ -1,10 +1,10 @@
 # AeroWeaver
 
+[匿名项目主页](https://anonymous.4open.science/w/AeroWeaver-D028/) · [论文附录](PAPER_APPENDIX.md)
+
 <p align="right">
   <a href="../README.md">English</a> · <strong>中文</strong>
 </p>
-
-[![研究基础：TALKER](https://img.shields.io/badge/Research%20Foundation-TALKER-0A66C2)](https://doi.org/10.1109/LRA.2024.3511434)
 
 AeroWeaver 是一个面向多无人机协同控制的 Web 系统，集成无人机状态同步、传感器画面、驾驶舱控制、技能执行、编队控制、轨迹导出和可选的 LLM 任务规划。
 
@@ -186,28 +186,6 @@ docs/           文档、界面截图与中文版 README 源文件
 requirements/   按用途拆分的 Python 依赖
 scripts/        启动、诊断与仓库维护脚本
 tests/          后端、适配器、协议与安全测试
-```
-
-## 研究基础
-
-AeroWeaver 延续了 **TALKER** 所建立的研究方向，包括面向无人机任务的任务激活式 LLM 推理、可复用动作原语与技能，以及基于交互的知识扩展。在此基础上，AeroWeaver 进一步发展为独立维护的多无人机操作系统，提供手动与 LLM 两种模式、仿真器适配、逐机并发执行、群体技能和中英文 Web 控制台。
-
-> J. Lou, R. Shi, Y. Lin, Q. Wang, and W. Wu, "TALKER: A Task-Activated
-> Language Model Based Knowledge-Extension Reasoning System," *IEEE Robotics
-> and Automation Letters*, vol. 10, no. 2, pp. 1026-1033, 2025.
-> [doi:10.1109/LRA.2024.3511434](https://doi.org/10.1109/LRA.2024.3511434)
-
-```bibtex
-@article{lou2025talker,
-  author  = {Lou, Jiabin and Shi, Rongye and Lin, Yuxin and Wang, Qunbo and Wu, Wenjun},
-  title   = {TALKER: A Task-Activated Language Model Based Knowledge-Extension Reasoning System},
-  journal = {IEEE Robotics and Automation Letters},
-  year    = {2025},
-  volume  = {10},
-  number  = {2},
-  pages   = {1026--1033},
-  doi     = {10.1109/LRA.2024.3511434}
-}
 ```
 
 ## 安全说明

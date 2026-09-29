@@ -1,0 +1,52 @@
+[
+  {
+    "file": "playback/teaser-720.webm",
+    "bytes": 446497,
+    "original_bytes": 2028399
+  },
+  {
+    "file": "playback/teaser-720.mp4",
+    "bytes": 546821,
+    "original_bytes": 2028399
+  },
+  {
+    "file": "playback/cockpit-720.webm",
+    "bytes": 325655,
+    "original_bytes": 1965039
+  },
+  {
+    "file": "playback/cockpit-720.mp4",
+    "bytes": 463845,
+    "original_bytes": 1965039
+  },
+  {
+    "file": "playback/simulation-720.webm",
+    "bytes": 369086,
+    "original_bytes": 1215044
+  },
+  {
+    "file": "playback/simulation-720.mp4",
+    "bytes": 452379,
+    "original_bytes": 1215044
+  },
+  {
+    "file": "playback/pursuit-720.webm",
+    "bytes": 2060948,
+    "original_bytes": 6554836
+  },
+  {
+    "file": "playback/pursuit-720.mp4",
+    "bytes": 2859629,
+    "original_bytes": 6554836
+  },
+  {
+    "file": "playback/aeroweaver-demo-720.webm",
+    "bytes": 5984456,
+    "original_bytes": 18963453
+  },
+  {
+    "file": "playback/aeroweaver-demo-720.mp4",
+    "bytes": 6875990,
+    "original_bytes": 18963453
+  }
+]
