@@ -1,12 +1,6 @@
 # <img src="images/aeroweaver-wordmark.svg" alt="AeroWeaver" width="360">
 
-### [<u>▶ 点击这里访问项目主页</u>](https://anonymous.4open.science/w/AeroWeaver-D028/)
-
-观看飞行演示视频，了解方法框架与实验结果。
-
-<p align="right">
-  <a href="../README.md">English</a> · <strong>中文</strong>
-</p>
+[<u>项目主页</u>](https://anonymous.4open.science/w/AeroWeaver-D028/) · [<u>演示视频</u>](https://anonymous.4open.science/w/AeroWeaver-D028/#demo-video) · [<u>English</u>](../README.md)
 
 AeroWeaver 是一个面向多无人机协同控制的 Web 系统，集成无人机状态同步、传感器画面、驾驶舱控制、技能执行、编队控制、轨迹导出和可选的 LLM 任务规划。
 
