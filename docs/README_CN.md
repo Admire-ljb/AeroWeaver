@@ -1,6 +1,8 @@
 # AeroWeaver
 
-### [项目主页 ↗](https://anonymous.4open.science/w/AeroWeaver-D028/)
+### [<u>▶ 点击这里访问项目主页</u>](https://anonymous.4open.science/w/AeroWeaver-D028/)
+
+观看飞行演示视频，了解方法框架与实验结果。
 
 <p align="right">
   <a href="../README.md">English</a> · <strong>中文</strong>
