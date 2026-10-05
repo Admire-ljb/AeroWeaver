@@ -39,7 +39,7 @@ python backend/server.py
 
 打开 **[http://127.0.0.1:5001](http://127.0.0.1:5001)**。全新检出的项目默认使用 Mock 和手动模式，选择一架无人机即可尝试执行技能。
 
-若要使用自然语言任务，先[配置模型](USAGE_CN.md#配置-llm)，切换到**自主**模式，再输入例如：
+若要使用自然语言任务，先[配置模型](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#配置-llm)，切换到**自主**模式，再输入例如：
 
 > 让 UAV-1、UAV-2 和 UAV-3 组成间距 8 米的三角编队，然后旋转待命 20 秒。
 
@@ -49,8 +49,8 @@ python backend/server.py
 | --- | --- |
 | 安装、运行模式、AirSim、LLM 和技能示例 | [使用指南](USAGE_CN.md) |
 | 任务定义、奖励函数、运行记录与实验细节 | [论文附录（英文）](PAPER_APPENDIX.md) |
-| 测试命令与仓库结构 | [开发说明](USAGE_CN.md#测试) |
-| PX4/Gazebo 和容器部署 | [部署选项](USAGE_CN.md#px4gazebo-与-docker) |
+| 测试命令与仓库结构 | [开发说明](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#测试) |
+| PX4/Gazebo 和容器部署 | [部署选项](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#px4gazebo-与-docker) |
 
 ## 安全与许可
 

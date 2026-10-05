@@ -6,13 +6,13 @@ Setup, configuration, and examples for the AeroWeaver runtime. For task definiti
 reward functions, and evaluation details, see the [paper appendix](PAPER_APPENDIX.md).
 Run commands from the repository root unless a step changes directories.
 
-- [Mock setup, including Windows](#quick-start-with-mock-vehicles)
-- [Operating modes](#operating-modes) and [architecture](#architecture)
-- [AirSim](#airsim) and [LLM configuration](#enabling-llm-mode)
-- [Swarm skills](#swarm-skills) and [worked examples](#real-examples)
-- [Experience and MPE2 scenarios](#role-centric-experience-and-mpe2-scenarios)
-- [PX4/Gazebo and Docker](#px4gazebo-and-docker)
-- [Development](#development) and [repository layout](#repository-layout)
+- [Mock setup, including Windows](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#quick-start-with-mock-vehicles)
+- [Operating modes](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#operating-modes) and [architecture](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#architecture)
+- [AirSim](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#airsim) and [LLM configuration](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#enabling-llm-mode)
+- [Swarm skills](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#swarm-skills) and [worked examples](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#real-examples)
+- [Experience and MPE2 scenarios](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#role-centric-experience-and-mpe2-scenarios)
+- [PX4/Gazebo and Docker](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#px4gazebo-and-docker)
+- [Development](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#development) and [repository layout](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#repository-layout)
 
 ## Quick Start With Mock Vehicles
 

@@ -5,17 +5,17 @@
 本文保留运行模式、仿真器与模型配置、技能参数示例及开发说明。
 任务定义、奖励函数和实验细节见[论文附录](PAPER_APPENDIX.md)。除步骤中明确切换目录外，命令均在仓库根目录执行。
 
-- [Mock 快速启动](#mock-快速启动)
-- [两种运行模式](#两种运行模式)
-- [接入 AirSim](#接入-airsim)与[配置 LLM](#配置-llm)
-- [群体技能](#群体技能)与[真实示例](#真实示例)
-- [角色经验与 MPE2 场景](#角色经验与-mpe2-场景)
-- [PX4/Gazebo 与 Docker](#px4gazebo-与-docker)
-- [测试](#测试)与[仓库结构](#仓库结构)
+- [Mock 快速启动](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#mock-快速启动)
+- [两种运行模式](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#两种运行模式)
+- [接入 AirSim](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#接入-airsim)与[配置 LLM](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#配置-llm)
+- [群体技能](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#群体技能)与[真实示例](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#真实示例)
+- [角色经验与 MPE2 场景](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#角色经验与-mpe2-场景)
+- [PX4/Gazebo 与 Docker](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#px4gazebo-与-docker)
+- [测试](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#测试)与[仓库结构](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE_CN.md#仓库结构)
 
 ## Mock 快速启动
 
-需要 Python 3.10+、Node.js 22.12+（或 20.19+）和 npm 10+。Windows PowerShell 的完整命令见[英文指南](USAGE.md#quick-start-with-mock-vehicles)。
+需要 Python 3.10+、Node.js 22.12+（或 20.19+）和 npm 10+。Windows PowerShell 的完整命令见[英文指南](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#quick-start-with-mock-vehicles)。
 
 下载并解压[匿名代码 ZIP](https://anonymous.4open.science/api/repo/AeroWeaver-D028/zip)，进入包含 `backend/` 和 `frontend/` 的项目目录，然后执行：
 
@@ -167,8 +167,8 @@ OLLAMA_MODEL=qwen2.5:7b
 相同任务和角色的已观测奖励用于调整技能选择，无需更新模型权重。网页 Memory 工作区可查看轨迹记录。
 默认数据库为 `backend/data/swarm_experience/trajectories.sqlite3`，可通过 `AEROWEAVER_EXPERIENCE_PATH` 修改路径。
 
-可选 MPE2 适配器的安装命令、场景列表和 API 见[英文指南](USAGE.md#role-centric-experience-and-mpe2-scenarios)；
-论文所用任务与奖励定义见[论文附录](PAPER_APPENDIX.md#task-specifications)。
+可选 MPE2 适配器的安装命令、场景列表和 API 见[英文指南](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#role-centric-experience-and-mpe2-scenarios)；
+论文所用任务与奖励定义见[论文附录](https://anonymous.4open.science/r/AeroWeaver-D028/docs/PAPER_APPENDIX.md#task-specifications)。
 
 ## PX4/Gazebo 与 Docker
 

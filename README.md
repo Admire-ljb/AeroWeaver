@@ -41,7 +41,7 @@ python backend/server.py
 
 Open **[http://127.0.0.1:5001](http://127.0.0.1:5001)**. A fresh checkout starts in Mock and Manual mode. Select a UAV and try a skill from the console.
 
-For language-driven missions, [configure a model](docs/USAGE.md#enabling-llm-mode), switch to **Autonomous**, and enter a task such as:
+For language-driven missions, [configure a model](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#enabling-llm-mode), switch to **Autonomous**, and enter a task such as:
 
 > Have UAV-1, UAV-2, and UAV-3 form a triangle with 8-meter spacing, then orbit for 20 seconds.
 
@@ -51,8 +51,8 @@ For language-driven missions, [configure a model](docs/USAGE.md#enabling-llm-mod
 | --- | --- |
 | Setup, operating modes, AirSim, LLMs, and skill examples | [User guide](docs/USAGE.md) |
 | Task definitions, rewards, runtime evidence, and evaluation | [Paper appendix](docs/PAPER_APPENDIX.md) |
-| Tests and repository structure | [Development guide](docs/USAGE.md#development) |
-| PX4/Gazebo and container deployment | [Deployment options](docs/USAGE.md#px4gazebo-and-docker) |
+| Tests and repository structure | [Development guide](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#development) |
+| PX4/Gazebo and container deployment | [Deployment options](https://anonymous.4open.science/r/AeroWeaver-D028/docs/USAGE.md#px4gazebo-and-docker) |
 
 ## Safety & License
 
